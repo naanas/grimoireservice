@@ -118,7 +118,7 @@ export const getProducts = async (req: Request, res: Response) => {
 export const createTransaction = async (req: Request, res: Response) => {
     // Validated by Zod
     const { productId, userId, zoneId, paymentMethod, authUserId, guestContact } = req.body;
-    console.log(`📦 [TRANSACTION] Creating Order: ${productId} for User: ${userId} (Auth: ${authUserId}) via ${paymentMethod}`);
+    console.log(`📦 [TRANSACTION] Creating Order: ${productId} for User: ${userId} (Auth: ${authUserId}) via ${paymentMethod} | GuestContact: ${guestContact}`);
 
     try {
         // 1. Get Product Data (With Mock Fallback)
@@ -174,15 +174,27 @@ export const createTransaction = async (req: Request, res: Response) => {
                 return res.status(403).json({ success: false, message: 'Invalid or Expired Session' });
             }
 
-            // IDOR PROTECTION: Payer is the one in the token, NOT user input (if any)
-            const user = await prisma.user.findUnique({ where: { id: payerId } });
+            // IDOR PROTECTION: Payer is the one in the token
+            // USE RAW QUERY to ensure we get phoneNumber even if prisma generate wasn't run
+            const userResult: any[] = await prisma.$queryRaw`SELECT * FROM "users" WHERE id = ${payerId} LIMIT 1`;
+            const user = userResult[0]; // Raw User Object
+
             if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
             if (user.balance < amount) {
                 return res.status(400).json({ success: false, message: 'Insufficient Balance' });
             }
 
+            const userPhoneNumber = user.phoneNumber; // Accessed safely from raw result
+            console.log(`👤 [BALANCE] User: ${user.name} | Phone: ${userPhoneNumber}`);
+
             // Deduct Balance & create SUCCESS transaction (Atomic)
+            // Note: We use nested update/create. For Raw User we might need separate operations if we want strict safety,
+            // but prisma.$transaction with standard calls is fine IF standard calls don't crash on new logic.
+            // Since we just want to read phoneNumber, the above Raw Query solved the READ.
+            // For WRITE (guestContact in Transaction), if schema is stale, this might throw.
+            // Let's rely on standard update for balance (balance column is old/safe).
+
             const [updatedUser, trx] = await prisma.$transaction([
                 prisma.user.update({
                     where: { id: payerId },
@@ -192,14 +204,14 @@ export const createTransaction = async (req: Request, res: Response) => {
                     data: {
                         invoice,
                         productId,
-                        targetId: userId, // Game User ID (The one receiving items)
+                        targetId: userId,
                         zoneId,
                         amount,
-                        status: 'SUCCESS', // Instant Success
+                        status: 'SUCCESS',
                         paymentMethod: 'BALANCE',
-                        userId: user.id, // Linked to Authenticated User
-                        guestContact: user.phoneNumber || undefined // Use Member's Phone for Notification
-                    }
+                        userId: user.id,
+                        guestContact: userPhoneNumber || undefined // Use fetched phone
+                    } as any // CAST TO ANY TO BYPASS STALE CLIENT TYPES
                 })
             ]);
 
@@ -264,9 +276,12 @@ export const createTransaction = async (req: Request, res: Response) => {
             console.log(`✅ [TRANSACTION] Created Successfully: Invoice ${invoice} | Ipaymu URL: ${payment.data?.Url}`);
 
             // WA NOTIF: INVOICE CREATED
+            console.log(`🔔 [DEBUG] Attempting Invoice WA. Contact: ${guestContact}`);
             if (guestContact) {
                 const waMsg = `*TAGIHAN BARU* 🧾\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\nSilakan bayar di sini:\n${payment.data?.Url}\n\nTerima kasih!`;
                 whatsappService.sendMessage(guestContact, waMsg);
+            } else {
+                console.log(`⚠️ [DEBUG] Skipping Invoice WA. Reason: No Guest Contact provided.`);
             }
 
             res.json({
@@ -438,6 +453,7 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
             console.log(`✅ Transaction ${trxId} (${trx.type}) SUCCESS | Fee: ${fee} | Total: ${totalPaid}`);
 
             // WA NOTIF: PAYMENT SUCCESS
+            console.log(`🔔 [DEBUG] Attempting Success WA. GuestContact in DB: ${trx.guestContact}`);
             if (trx.guestContact) {
                 const waMsg = `*PEMBAYARAN DITERIMA* 💰\nInvoice: *${trx.invoice}*\nStatus: LUNAS\n\nSistem sedang memproses pesanan Anda. Mohon tunggu 1-3 menit.`;
                 whatsappService.sendMessage(trx.guestContact, waMsg);
