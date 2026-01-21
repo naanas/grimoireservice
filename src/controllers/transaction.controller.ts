@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import * as apigamesService from '../services/apigames.service.js';
 import * as ipaymuService from '../services/ipaymu.service.js';
+import * as whatsappService from '../services/whatsapp.service.js';
 
 const prisma = new PrismaClient();
 
@@ -49,6 +50,13 @@ const processGameTopup = async (trxId: string) => {
                     updatedAt: new Date()
                 }
             });
+
+            // WA NOTIF: PROCESSING
+            if (trx.guestContact) {
+                const waMsg = `*STATUS UPDATE* ⏳\nOrder ${trx.invoice} sedang diproses oleh Provider.\nMohon tunggu sebentar.`;
+                whatsappService.sendMessage(trx.guestContact, waMsg);
+            }
+
             return { success: true };
         } else {
             // 3B. Provider Rejected Immediately
@@ -109,7 +117,7 @@ export const getProducts = async (req: Request, res: Response) => {
 // POST /api/transaction/create
 export const createTransaction = async (req: Request, res: Response) => {
     // Validated by Zod
-    const { productId, userId, zoneId, paymentMethod, authUserId } = req.body;
+    const { productId, userId, zoneId, paymentMethod, authUserId, guestContact } = req.body;
     console.log(`📦 [TRANSACTION] Creating Order: ${productId} for User: ${userId} (Auth: ${authUserId}) via ${paymentMethod}`);
 
     try {
@@ -189,7 +197,8 @@ export const createTransaction = async (req: Request, res: Response) => {
                         amount,
                         status: 'SUCCESS', // Instant Success
                         paymentMethod: 'BALANCE',
-                        userId: user.id // Linked to Authenticated User
+                        userId: user.id, // Linked to Authenticated User
+                        guestContact: user.phoneNumber || undefined // Use Member's Phone for Notification
                     }
                 })
             ]);
@@ -220,7 +229,8 @@ export const createTransaction = async (req: Request, res: Response) => {
                         amount,
                         status: 'PENDING',
                         paymentMethod,
-                        userId: authUserId || undefined // Link to DB User (if logged in and user provided valid ID), otherwise Guest
+                        userId: authUserId || undefined, // Link to DB User (if logged in and user provided valid ID), otherwise Guest
+                        guestContact: guestContact || undefined
                     }
                 });
                 trxId = trx.id;
@@ -252,6 +262,13 @@ export const createTransaction = async (req: Request, res: Response) => {
             }
 
             console.log(`✅ [TRANSACTION] Created Successfully: Invoice ${invoice} | Ipaymu URL: ${payment.data?.Url}`);
+
+            // WA NOTIF: INVOICE CREATED
+            if (guestContact) {
+                const waMsg = `*TAGIHAN BARU* 🧾\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\nSilakan bayar di sini:\n${payment.data?.Url}\n\nTerima kasih!`;
+                whatsappService.sendMessage(guestContact, waMsg);
+            }
+
             res.json({
                 success: true,
                 data: {
@@ -419,6 +436,12 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
             }
 
             console.log(`✅ Transaction ${trxId} (${trx.type}) SUCCESS | Fee: ${fee} | Total: ${totalPaid}`);
+
+            // WA NOTIF: PAYMENT SUCCESS
+            if (trx.guestContact) {
+                const waMsg = `*PEMBAYARAN DITERIMA* 💰\nInvoice: *${trx.invoice}*\nStatus: LUNAS\n\nSistem sedang memproses pesanan Anda. Mohon tunggu 1-3 menit.`;
+                whatsappService.sendMessage(trx.guestContact, waMsg);
+            }
         } else if (status === 'gagal') {
             await prisma.transaction.update({
                 where: { id: trxId },
@@ -499,7 +522,10 @@ export const handleApigamesWebhook = async (req: Request, res: Response) => {
             // return res.status(400).json({ success: false, message: 'Invalid Signature' });
         }
 
-        const trx = await prisma.transaction.findUnique({ where: { id: ref_id } });
+        const trx = await prisma.transaction.findUnique({
+            where: { id: ref_id },
+            include: { product: true } // Include Product for Name
+        });
         if (!trx) return res.status(404).json({ success: false, message: 'Transaction Not Found' });
 
         // 2. Update Status
@@ -536,6 +562,18 @@ export const handleApigamesWebhook = async (req: Request, res: Response) => {
                 } as any
             });
             console.log(`✅ [WEBHOOK] Updated Trx ${ref_id} to ${newStatus} | SN: ${sn}`);
+
+            // WA NOTIF: COMPLETED / FAILED
+            if (trx.guestContact) {
+                let waMsg = '';
+                if (newStatus === 'SUCCESS') {
+                    waMsg = `*TOPUP SUKSES* ✅\nOrder: *${trx.invoice}*\nItem: ${trx.product?.name}\nSN/Ref: ${sn || '-'}\n\nTerima kasih telah belanja di Grimoire! 🩸`;
+                } else if (newStatus === 'FAILED') {
+                    waMsg = `*TOPUP GAGAL* ❌\nOrder: *${trx.invoice}*\nMohon hubungi Admin untuk refund manual.`;
+                }
+
+                if (waMsg) whatsappService.sendMessage(trx.guestContact, waMsg);
+            }
         } else {
             console.log(`ℹ️ [WEBHOOK] No Status Change for ${ref_id}: ${status}`);
         }

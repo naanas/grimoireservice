@@ -9,17 +9,30 @@ const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-this';
 // POST /api/auth/register
 export const register = async (req: Request, res: Response) => {
     try {
-        const { name, email, password } = req.body;
+        const { name, email, password, phoneNumber } = req.body;
 
         // 1. Validation
-        if (!name || !email || !password) {
-            return res.status(400).json({ success: false, message: "All fields are required" });
+        if (!name || !email || !password || !phoneNumber) {
+            return res.status(400).json({ success: false, message: "All fields are required (including WhatsApp Number)" });
         }
 
-        // 2. Check if user exists
-        const existingUser = await prisma.user.findUnique({ where: { email } });
+        // Validate Phone Format (Basic)
+        if (!phoneNumber.startsWith('08') && !phoneNumber.startsWith('62')) {
+            return res.status(400).json({ success: false, message: "Invalid Phone Number format (Use 08xx or 62xx)" });
+        }
+
+        // 2. Check if user exists (Email OR Phone)
+        const existingUser = await prisma.user.findFirst({
+            where: {
+                OR: [
+                    { email },
+                    { phoneNumber }
+                ]
+            }
+        });
+
         if (existingUser) {
-            return res.status(400).json({ success: false, message: "Email already registered" });
+            return res.status(400).json({ success: false, message: "Email or Phone Number already registered" });
         }
 
         // 3. Hash Password
@@ -30,6 +43,7 @@ export const register = async (req: Request, res: Response) => {
             data: {
                 name,
                 email,
+                phoneNumber,
                 password: hashedPassword,
                 role: 'USER'
             }
@@ -42,7 +56,7 @@ export const register = async (req: Request, res: Response) => {
             success: true,
             message: "User registered successfully",
             data: {
-                user: { id: user.id, name: user.name, email: user.email },
+                user: { id: user.id, name: user.name, email: user.email, phoneNumber: user.phoneNumber },
                 token
             }
         });

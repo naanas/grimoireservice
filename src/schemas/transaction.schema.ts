@@ -8,6 +8,7 @@ export const createTransactionSchema = z.object({
         errorMap: () => ({ message: 'Invalid Payment Method' })
     }),
     authUserId: z.string().optional(), // Optional, for guest tracking if needed
+    guestContact: z.string().optional(), // WhatsApp number for notifications
 });
 
 export const createDepositSchema = z.object({
