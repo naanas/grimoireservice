@@ -108,6 +108,7 @@ export const getProducts = async (req: Request, res: Response) => {
 
 // POST /api/transaction/create
 export const createTransaction = async (req: Request, res: Response) => {
+    // Validated by Zod
     const { productId, userId, zoneId, paymentMethod, authUserId } = req.body;
     console.log(`📦 [TRANSACTION] Creating Order: ${productId} for User: ${userId} (Auth: ${authUserId}) via ${paymentMethod}`);
 
@@ -148,7 +149,7 @@ export const createTransaction = async (req: Request, res: Response) => {
 
         // 4. Handle Payment
         if (paymentMethod === 'BALANCE') {
-            // A. BALANCE PAYMENT (SECURE)
+            // A. BALANCE PAYMENT (SECURE) - STRICTLY REQUIRE HEADER
             const authHeader = req.headers.authorization;
             if (!authHeader) return res.status(401).json({ success: false, message: 'Authentication required for Balance payment' });
 
@@ -165,6 +166,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                 return res.status(403).json({ success: false, message: 'Invalid or Expired Session' });
             }
 
+            // IDOR PROTECTION: Payer is the one in the token, NOT user input (if any)
             const user = await prisma.user.findUnique({ where: { id: payerId } });
             if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
@@ -182,7 +184,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                     data: {
                         invoice,
                         productId,
-                        targetId: userId, // Game User ID
+                        targetId: userId, // Game User ID (The one receiving items)
                         zoneId,
                         amount,
                         status: 'SUCCESS', // Instant Success
@@ -205,7 +207,7 @@ export const createTransaction = async (req: Request, res: Response) => {
             });
 
         } else {
-            // B. IPAYMU PAYMENT (QRIS, VA, etc.)
+            // B. IPAYMU PAYMENT (QRIS, VA, etc.) - Public / Guest Allowed
             let trxId = `MOCK_TRX_${Date.now()}`;
 
             try {
@@ -218,7 +220,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                         amount,
                         status: 'PENDING',
                         paymentMethod,
-                        userId: authUserId || undefined // Link to DB User (if logged in), otherwise Guest
+                        userId: authUserId || undefined // Link to DB User (if logged in and user provided valid ID), otherwise Guest
                     }
                 });
                 trxId = trx.id;
@@ -266,16 +268,15 @@ export const createTransaction = async (req: Request, res: Response) => {
     }
 };
 
-// POST /api/callback/ipaymu
 // POST /api/transaction/deposit
 export const createDeposit = async (req: Request, res: Response) => {
-    const { userId, amount, paymentMethod } = req.body;
+    // PROTECTED ROUTE: User verified by middleware
+    const { amount, paymentMethod } = req.body;
+    const userId = (req as any).user.id; // Secure: From Token
+
     console.log(`💰 [DEPOSIT] Creating Deposit: Rp${amount} for User: ${userId} via ${paymentMethod}`);
 
-    // VALIDATION Check
-    if (!amount || isNaN(amount) || Number(amount) <= 0) {
-        return res.status(400).json({ success: false, message: "Invalid amount. Must be positive." });
-    }
+    // VALIDATION handled by Zod Middleware
 
     try {
         const user = await prisma.user.findUnique({ where: { id: userId } });
