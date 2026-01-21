@@ -231,6 +231,16 @@ export const createTransaction = async (req: Request, res: Response) => {
             // B. IPAYMU PAYMENT (QRIS, VA, etc.) - Public / Guest Allowed
             let trxId = `MOCK_TRX_${Date.now()}`;
 
+            // Determine Notification Contact
+            let notificationContact = guestContact;
+            if (!notificationContact && authUserId) {
+                // Fetch Member Phone via Raw SQL
+                try {
+                    const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${authUserId} LIMIT 1`;
+                    if (u.length > 0 && u[0].phoneNumber) notificationContact = u[0].phoneNumber;
+                } catch (e) { console.warn("Failed to fetch member phone", e); }
+            }
+
             try {
                 const trx = await prisma.transaction.create({
                     data: {
@@ -241,8 +251,8 @@ export const createTransaction = async (req: Request, res: Response) => {
                         amount,
                         status: 'PENDING',
                         paymentMethod,
-                        userId: authUserId || undefined, // Link to DB User (if logged in and user provided valid ID), otherwise Guest
-                        guestContact: guestContact || undefined
+                        userId: authUserId || undefined,
+                        guestContact: guestContact || undefined // Keep DB field as is ( Guest Only basically, or we could store notificationContact here but schema might vary)
                     }
                 });
                 trxId = trx.id;
@@ -276,12 +286,12 @@ export const createTransaction = async (req: Request, res: Response) => {
             console.log(`✅ [TRANSACTION] Created Successfully: Invoice ${invoice} | Ipaymu URL: ${payment.data?.Url}`);
 
             // WA NOTIF: INVOICE CREATED
-            console.log(`🔔 [DEBUG] Attempting Invoice WA. Contact: ${guestContact}`);
-            if (guestContact) {
+            console.log(`🔔 [DEBUG] Attempting Invoice WA. Contact: ${notificationContact}`);
+            if (notificationContact) {
                 const waMsg = `*TAGIHAN BARU* 🧾\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\nSilakan bayar di sini:\n${payment.data?.Url}\n\nTerima kasih!`;
-                whatsappService.sendMessage(guestContact, waMsg);
+                whatsappService.sendMessage(notificationContact, waMsg);
             } else {
-                console.log(`⚠️ [DEBUG] Skipping Invoice WA. Reason: No Guest Contact provided.`);
+                console.log(`⚠️ [DEBUG] Skipping Invoice WA. Reason: No Contact found (Guest: ${guestContact}, Member: ${authUserId})`);
             }
 
             res.json({
@@ -453,10 +463,18 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
             console.log(`✅ Transaction ${trxId} (${trx.type}) SUCCESS | Fee: ${fee} | Total: ${totalPaid}`);
 
             // WA NOTIF: PAYMENT SUCCESS
-            console.log(`🔔 [DEBUG] Attempting Success WA. GuestContact in DB: ${trx.guestContact}`);
-            if (trx.guestContact) {
+            let targetWa = trx.guestContact;
+            if (!targetWa && trx.userId) {
+                try {
+                    const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
+                    if (u.length > 0 && u[0].phoneNumber) targetWa = u[0].phoneNumber;
+                } catch (e) { console.warn("Failed to fetch user phone for webhook", e); }
+            }
+
+            console.log(`🔔 [DEBUG] Attempting Success WA. Target: ${targetWa}`);
+            if (targetWa) {
                 const waMsg = `*PEMBAYARAN DITERIMA* 💰\nInvoice: *${trx.invoice}*\nStatus: LUNAS\n\nSistem sedang memproses pesanan Anda. Mohon tunggu 1-3 menit.`;
-                whatsappService.sendMessage(trx.guestContact, waMsg);
+                whatsappService.sendMessage(targetWa, waMsg);
             }
         } else if (status === 'gagal') {
             await prisma.transaction.update({
@@ -580,7 +598,15 @@ export const handleApigamesWebhook = async (req: Request, res: Response) => {
             console.log(`✅ [WEBHOOK] Updated Trx ${ref_id} to ${newStatus} | SN: ${sn}`);
 
             // WA NOTIF: COMPLETED / FAILED
-            if (trx.guestContact) {
+            let targetWa = trx.guestContact;
+            if (!targetWa && trx.userId) {
+                try {
+                    const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
+                    if (u.length > 0 && u[0].phoneNumber) targetWa = u[0].phoneNumber;
+                } catch (e) { console.warn("Failed to fetch user phone for provider webhook", e); }
+            }
+
+            if (targetWa) {
                 let waMsg = '';
                 if (newStatus === 'SUCCESS') {
                     waMsg = `*TOPUP SUKSES* ✅\nOrder: *${trx.invoice}*\nItem: ${trx.product?.name}\nSN/Ref: ${sn || '-'}\n\nTerima kasih telah belanja di Grimoire! 🩸`;
@@ -588,7 +614,7 @@ export const handleApigamesWebhook = async (req: Request, res: Response) => {
                     waMsg = `*TOPUP GAGAL* ❌\nOrder: *${trx.invoice}*\nMohon hubungi Admin untuk refund manual.`;
                 }
 
-                if (waMsg) whatsappService.sendMessage(trx.guestContact, waMsg);
+                if (waMsg) whatsappService.sendMessage(targetWa, waMsg);
             }
         } else {
             console.log(`ℹ️ [WEBHOOK] No Status Change for ${ref_id}: ${status}`);
