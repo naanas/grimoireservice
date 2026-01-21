@@ -270,8 +270,9 @@ export const createTransaction = async (req: Request, res: Response) => {
             }
 
             // Update Transaction with Payment Info
+            // Table name is likely 'transactions' based on Prisma convention (User -> users)
             if (payment.data && !trxId.startsWith('MOCK')) {
-                await prisma.$executeRaw`UPDATE "Transaction" SET "paymentUrl" = ${payment.data.Url}, "paymentTrxId" = ${payment.data.TransactionId} WHERE id = ${trxId}`;
+                await prisma.$executeRaw`UPDATE "transactions" SET "paymentUrl" = ${payment.data.Url}, "paymentTrxId" = ${payment.data.TransactionId} WHERE id = ${trxId}`;
             }
 
             // --- POKOK PERMASALAHAN 1: KIRIM WA TAGIHAN ---
