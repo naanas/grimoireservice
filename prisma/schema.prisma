@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum TransactionStatus {
+  PENDING
+  PAID
+  PROCESSING
+  SUCCESS
+  FAILED
+  EXPIRED
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String?
+  name      String?
+  role      Role     @default(USER)
+  balance   Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  transactions Transaction[]
+
+  @@map("users")
+}
+
+model Category {
+  id        String    @id @default(uuid())
+  name      String
+  slug      String    @unique
+  image     String?   // URL to image
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  
+  products  Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id            String   @id @default(uuid())
+  sku_code      String   @unique // Code from provider (e.g. ML-5)
+  name          String
+  price_provider Float   // Price from Digiflazz/Apigames
+  price_sell    Float    // Price to User
+  category      Category @relation(fields: [categoryId], references: [id])
+  categoryId    String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transactions Transaction[]
+
+  @@map("products")
+}
+
+enum TransactionType {
+  GAME_TOPUP
+  DEPOSIT
+}
+
+model Transaction {
+  id              String            @id @default(uuid())
+  invoice         String            @unique // GRM-2024...
+  user            User?             @relation(fields: [userId], references: [id])
+  userId          String?           // Nullable for Guest
+  guestContact    String?           // WA/Email for guest
+  productId       String?
+  product         Product?          @relation(fields: [productId], references: [id])
+  targetId        String?           // Game ID (Nullable for Deposit)
+  type            String            @default("TOPUP") // TOPUP or DEPOSIT?
+  zoneId          String?           // Game Server (Nullable)
+  
+  amount          Float             // Total Paid
+  adminFee        Float             @default(0)
+  
+  status          TransactionStatus @default(PENDING)
+  paymentMethod   String            // QRIS, VA_BCA, etc.
+  paymentUrl      String?           // URL/QR String from Ipaymu
+  paymentTrxId    String?           // ID from Ipaymu
+  
+  providerTrxId   String?           // ID from Apigames
+  providerStatus  String?           // Status from Apigames
+  sn              String?           // Serial Number / Token from Provider
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@map("transactions")
+}
