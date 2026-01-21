@@ -228,17 +228,19 @@ export const createTransaction = async (req: Request, res: Response) => {
             });
 
         } else {
-            // B. IPAYMU PAYMENT (QRIS, VA, etc.) - Public / Guest Allowed
+            // B. IPAYMU PAYMENT (QRIS, VA, etc.)
             let trxId = `MOCK_TRX_${Date.now()}`;
 
-            // Determine Notification Contact
-            let notificationContact = guestContact;
-            if (!notificationContact && authUserId) {
-                // Fetch Member Phone via Raw SQL
+            // 1. RESOLVE PHONE NUMBER FOR NOTIFICATION
+            let targetPhone = guestContact;
+            if (!targetPhone && authUserId) {
+                // Try to find member phone if not provided as guest contact
                 try {
                     const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${authUserId} LIMIT 1`;
-                    if (u.length > 0 && u[0].phoneNumber) notificationContact = u[0].phoneNumber;
-                } catch (e) { console.warn("Failed to fetch member phone", e); }
+                    if (u.length > 0) targetPhone = u[0].phoneNumber;
+                } catch (e) {
+                    console.log("Error fetching member phone:", e);
+                }
             }
 
             try {
@@ -252,46 +254,35 @@ export const createTransaction = async (req: Request, res: Response) => {
                         status: 'PENDING',
                         paymentMethod,
                         userId: authUserId || undefined,
-                        guestContact: guestContact || undefined // Keep DB field as is ( Guest Only basically, or we could store notificationContact here but schema might vary)
+                        guestContact: targetPhone || undefined // Store the resolved phone
                     }
                 });
                 trxId = trx.id;
             } catch (dbError) {
-                console.warn("DB Create Transaction Failed, proceeding with Mock Transaction");
+                console.warn("DB Transaction Create Failed:", dbError);
             }
 
-            // Pass slug to redirect back to the same order page
             const returnPath = `/order/${product.category.slug}`;
             const payment = await ipaymuService.initPayment(trxId, amount, 'Guest', 'guest@grimoire.com', paymentMethod, returnPath);
 
             if (!payment.success) {
-                try {
-                    await prisma.transaction.update({ where: { id: trxId }, data: { status: 'FAILED' } });
-                } catch (e) { }
                 return res.status(500).json({ success: false, message: payment.message || 'Payment Error' });
             }
 
+            // Update Transaction with Payment Info
             if (payment.data && !trxId.startsWith('MOCK')) {
-                try {
-                    await prisma.transaction.update({
-                        where: { id: trxId },
-                        data: {
-                            paymentUrl: payment.data.Url,
-                            paymentTrxId: payment.data.TransactionId
-                        }
-                    });
-                } catch (e) { console.warn("DB Update Failed"); }
+                await prisma.$executeRaw`UPDATE "Transaction" SET "paymentUrl" = ${payment.data.Url}, "paymentTrxId" = ${payment.data.TransactionId} WHERE id = ${trxId}`;
             }
 
-            console.log(`✅ [TRANSACTION] Created Successfully: Invoice ${invoice} | Ipaymu URL: ${payment.data?.Url}`);
+            // --- POKOK PERMASALAHAN 1: KIRIM WA TAGIHAN ---
+            if (targetPhone) {
+                console.log(`🚀 [WA] Sending Invoice to ${targetPhone}`);
+                const waMsg = `*TAGIHAN BARU* 🧾\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\nBayar di sini: ${payment.data?.Url}\n\nTerima kasih!`;
 
-            // WA NOTIF: INVOICE CREATED
-            console.log(`🔔 [DEBUG] Attempting Invoice WA. Contact: ${notificationContact}`);
-            if (notificationContact) {
-                const waMsg = `*TAGIHAN BARU* 🧾\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\nSilakan bayar di sini:\n${payment.data?.Url}\n\nTerima kasih!`;
-                whatsappService.sendMessage(notificationContact, waMsg);
+                // ASYNC HIT - Fire and Forget
+                whatsappService.sendMessage(targetPhone, waMsg).catch(err => console.error("WA Error:", err));
             } else {
-                console.log(`⚠️ [DEBUG] Skipping Invoice WA. Reason: No Contact found (Guest: ${guestContact}, Member: ${authUserId})`);
+                console.log("⚠️ [WA] Skipped: No Phone Number");
             }
 
             res.json({
@@ -462,19 +453,23 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
 
             console.log(`✅ Transaction ${trxId} (${trx.type}) SUCCESS | Fee: ${fee} | Total: ${totalPaid}`);
 
-            // WA NOTIF: PAYMENT SUCCESS
+            // --- POKOK PERMASALAHAN 2: KIRIM WA STRUK TRANSAKSI ---
             let targetWa = trx.guestContact;
+
+            // If guestContact missing in TRX, try look up USER table
             if (!targetWa && trx.userId) {
                 try {
                     const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
-                    if (u.length > 0 && u[0].phoneNumber) targetWa = u[0].phoneNumber;
+                    if (u.length > 0) targetWa = u[0].phoneNumber;
                 } catch (e) { console.warn("Failed to fetch user phone for webhook", e); }
             }
 
-            console.log(`🔔 [DEBUG] Attempting Success WA. Target: ${targetWa}`);
             if (targetWa) {
+                console.log(`🚀 [WA] Sending Receipt to ${targetWa}`);
                 const waMsg = `*PEMBAYARAN DITERIMA* 💰\nInvoice: *${trx.invoice}*\nStatus: LUNAS\n\nSistem sedang memproses pesanan Anda. Mohon tunggu 1-3 menit.`;
-                whatsappService.sendMessage(targetWa, waMsg);
+                whatsappService.sendMessage(targetWa, waMsg).catch(err => console.error("WA Error:", err));
+            } else {
+                console.log("⚠️ [WA] Skipped Receipt: No Phone Number");
             }
         } else if (status === 'gagal') {
             await prisma.transaction.update({
