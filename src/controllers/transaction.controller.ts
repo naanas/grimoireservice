@@ -51,10 +51,15 @@ const processGameTopup = async (trxId: string) => {
                 }
             });
 
-            // WA NOTIF: PROCESSING
+            // WA NOTIF: PROCESSING or SUCCESS
             if (trx.guestContact) {
-                const waMsg = `*STATUS UPDATE* ⏳\nOrder ${trx.invoice} sedang diproses oleh Provider.\nMohon tunggu sebentar.`;
-                whatsappService.sendMessage(trx.guestContact, waMsg);
+                if (newStatus === 'SUCCESS') {
+                    const waMsg = `*TOPUP SUKSES* ✅\nOrder: *${trx.invoice}*\nItem: ${trx.product.name}\nSN/Ref: ${order.data.sn || '-'}\n\nTerima kasih telah belanja di Grimoire! 🩸`;
+                    whatsappService.sendMessage(trx.guestContact, waMsg);
+                } else {
+                    const waMsg = `*STATUS UPDATE* ⏳\nOrder ${trx.invoice} sedang diproses oleh Provider.\nMohon tunggu sebentar.`;
+                    whatsappService.sendMessage(trx.guestContact, waMsg);
+                }
             }
 
             return { success: true };
@@ -217,6 +222,9 @@ export const createTransaction = async (req: Request, res: Response) => {
 
             console.log(`✅ [BALANCE] Payment Success: ${invoice} | User: ${user.name}`);
 
+            // --- FIRE AND FORGET: PROCESS GAME TOPUP ---
+            processGameTopup(trx.id).catch(err => console.error("Auto Process Error:", err));
+
             return res.json({
                 success: true,
                 data: {
@@ -232,15 +240,24 @@ export const createTransaction = async (req: Request, res: Response) => {
             let trxId = `MOCK_TRX_${Date.now()}`;
 
             // 1. RESOLVE PHONE NUMBER FOR NOTIFICATION
-            let targetPhone = guestContact;
-            if (!targetPhone && authUserId) {
-                // Try to find member phone if not provided as guest contact
+            // Prioritize Guest Contact (if guest), otherwise check Token for logged in user
+            // MANUALLY DECODE TOKEN because route does NOT use authenticateToken middleware
+            let userToken: any = (req as any).user;
+
+            if (!userToken && req.headers.authorization) {
                 try {
-                    const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${authUserId} LIMIT 1`;
-                    if (u.length > 0) targetPhone = u[0].phoneNumber;
-                } catch (e) {
-                    console.log("Error fetching member phone:", e);
-                }
+                    const token = req.headers.authorization.split(' ')[1];
+                    if (token) {
+                        const jwt = (await import('jsonwebtoken')).default;
+                        userToken = jwt.verify(token, process.env.JWT_SECRET || 'super-secret-key-change-this');
+                    }
+                } catch (e) { console.warn("Token manual decode failed:", e); }
+            }
+
+            let targetPhone = guestContact;
+
+            if (!targetPhone && userToken && userToken.phoneNumber) {
+                targetPhone = userToken.phoneNumber;
             }
 
             try {
@@ -472,6 +489,12 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
             } else {
                 console.log("⚠️ [WA] Skipped Receipt: No Phone Number");
             }
+
+            // --- POKOK PERMASALAHAN 3: TRIGGER GAME PROVIDER (THE MISSING LINK) ---
+            if (trx.type === 'TOPUP' || !trx.type) { // Default is TOPUP
+                console.log(`⚙️ [CALLBACK] Triggering Auto-Process for ${trxId}`);
+                processGameTopup(trxId).catch(e => console.error("Process Trigger Failed:", e));
+            }
         } else if (status === 'gagal') {
             await prisma.transaction.update({
                 where: { id: trxId },
@@ -654,6 +677,76 @@ export const getVendorProducts = async (req: Request, res: Response) => {
             res.status(500).json({ success: false, message: result.message });
         }
     } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// POST /api/check-status/:id
+export const checkTransactionStatus = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params as { id: string };
+
+        // 1. Get Transaction
+        const trx = await prisma.transaction.findUnique({ where: { id } });
+        if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
+
+        if ((trx.status as any) === 'SUCCESS') {
+            return res.json({ success: true, message: "Transaction is already SUCCESS", data: trx });
+        }
+
+        // 2. Check Provider Status
+        const result = await apigamesService.checkTransaction(trx.invoice);
+
+        if (result.success && result.data) {
+            const providerStatus = (result.data as any).status; // Sukses, Pending, Gagal
+            let newStatus: any = trx.status;
+
+            if (providerStatus === 'Sukses' || providerStatus === 'Success') {
+                newStatus = 'SUCCESS';
+            } else if (providerStatus === 'Gagal' || providerStatus === 'Failed') {
+                newStatus = 'FAILED';
+            }
+
+            // Update if changed
+            if (newStatus !== trx.status) {
+                await prisma.transaction.update({
+                    where: { id },
+                    data: {
+                        status: newStatus as any, // Cast to any to bypass strict Enum check if needed, or ensure "SUCCESS" is in Enum
+                        providerStatus: providerStatus,
+                        sn: (result.data as any).sn,
+                        updatedAt: new Date()
+                    }
+                });
+
+                // If Success, Trigger WA
+                if (newStatus === 'SUCCESS') {
+                    let targetWa = trx.guestContact;
+                    if (!targetWa && trx.userId) {
+                        // Fetch user phone if needed
+                        try {
+                            const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
+                            if (u.length > 0 && u[0].phoneNumber) targetWa = u[0].phoneNumber;
+                        } catch (e) { console.warn("Failed to fetch user phone for check status", e); }
+                    }
+
+                    if (targetWa) {
+                        const waMsg = `*TOPUP SUKSES* ✅ (Manual Check)\nOrder: *${trx.invoice}*\nSN/Ref: ${(result.data as any).sn || '-'}\n\nTerima kasih!`;
+                        whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
+                    }
+                }
+
+                return res.json({ success: true, message: "Status Updated", data: { status: newStatus } });
+            } else {
+                return res.json({ success: true, message: "Status Unchanged (Provider: " + providerStatus + ")", data: { status: trx.status } });
+            }
+
+        } else {
+            return res.status(400).json({ success: false, message: "Provider Check Failed: " + result.message });
+        }
+
+    } catch (error: any) {
+        console.error("Check Status Error:", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };

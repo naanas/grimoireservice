@@ -7,10 +7,11 @@ export const validate = (schema: ZodSchema) => (req: Request, res: Response, nex
         next();
     } catch (error) {
         if (error instanceof ZodError) {
+            console.warn("Validation Error Details:", JSON.stringify(error));
             return res.status(400).json({
                 success: false,
                 message: 'Validation Error',
-                errors: error.errors.map(e => ({ field: e.path.join('.'), message: e.message }))
+                errors: ((error as any).errors || []).map((e: any) => ({ field: (e.path || []).join('.'), message: e.message }))
             });
         }
         next(error);

@@ -50,7 +50,7 @@ export const register = async (req: Request, res: Response) => {
         });
 
         // 5. Generate Token
-        const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ id: user.id, role: user.role, phoneNumber: user.phoneNumber }, JWT_SECRET, { expiresIn: '7d' });
 
         res.status(201).json({
             success: true,
@@ -88,13 +88,13 @@ export const login = async (req: Request, res: Response) => {
 
         console.log(`✅ [LOGIN] Success for: ${email}`);
 
-        const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ id: user.id, role: user.role, phoneNumber: user.phoneNumber }, JWT_SECRET, { expiresIn: '7d' });
 
         res.json({
             success: true,
             message: "Login successful",
             data: {
-                user: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance },
+                user: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance, phoneNumber: user.phoneNumber },
                 token
             }
         });
@@ -118,7 +118,7 @@ export const getProfile = async (req: Request, res: Response) => {
 
         res.json({
             success: true,
-            data: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance }
+            data: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance, phoneNumber: user.phoneNumber }
         });
     } catch (error) {
         console.error("Auth Error:", error);

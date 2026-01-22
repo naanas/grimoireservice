@@ -119,7 +119,7 @@ export const placeOrder = async (refId: string, sku: string, dest: string, zoneI
             success: true,
             data: {
                 ref_id: refId,
-                status: 'Pending',
+                status: 'Sukses',
                 trx_id: `API_${Date.now()}`,
                 sn: '',
                 price: 10000,
@@ -163,5 +163,50 @@ export const placeOrder = async (refId: string, sku: string, dest: string, zoneI
     } catch (error: any) {
         console.error('[APIGAMES] Order Error:', error.message);
         return { success: false, message: 'Provider Connection Error' };
+    }
+}
+
+
+export const checkTransaction = async (refId: string) => {
+    console.log(`[APIGAMES] Check Status: ${refId} | Mock: ${MOCK_MODE}`);
+
+    if (MOCK_MODE) {
+        // Simulate API
+        await new Promise(r => setTimeout(r, 500));
+        return {
+            success: true,
+            data: {
+                ref_id: refId,
+                status: 'Sukses',
+                sn: 'MOCK_SN_' + Date.now(),
+                message: 'Transaction Success (Mock)'
+            }
+        };
+    }
+
+    try {
+        const signature = createSignature(`${MERCHANT_ID}:${SECRET_KEY}:${refId}`);
+        const url = `${APIGAMES_URL}/v2/transaksi/status?merchant_id=${MERCHANT_ID}&ref_id=${refId}&signature=${signature}`;
+
+        const response = await axios.get(url);
+        const resData = response.data;
+
+        if (resData.status === 1 || (resData.data && resData.data.status)) {
+            return {
+                success: true,
+                data: {
+                    ref_id: resData.data.ref_id,
+                    status: resData.data.status,
+                    sn: resData.data.sn,
+                    message: resData.data.message
+                }
+            };
+        } else {
+            return { success: false, message: resData.error_msg || 'Status Check Failed' };
+        }
+
+    } catch (error: any) {
+        console.error('[APIGAMES] Status Check Error:', error.message);
+        return { success: false, message: 'Provider Error' };
     }
 };
