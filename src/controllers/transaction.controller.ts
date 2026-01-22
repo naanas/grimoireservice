@@ -306,6 +306,7 @@ export const createTransaction = async (req: Request, res: Response) => {
             res.json({
                 success: true,
                 data: {
+                    id: trxId, // Added ID for polling
                     invoice,
                     paymentUrl: payment.data?.Url,
                     productName: product.name,
@@ -690,11 +691,53 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
         const trx = await prisma.transaction.findUnique({ where: { id } });
         if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
 
-        if ((trx.status as any) === 'SUCCESS') {
-            return res.json({ success: true, message: "Transaction is already SUCCESS", data: trx });
+        // A. If PENDING, Check Payment Gateway (IPAYMU) First
+        if ((trx.status as any) === 'PENDING') {
+            if (trx.paymentTrxId) {
+                const payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
+
+                // Ipaymu Status: 1=Berhasil, 0=Pending, -1=Gagal (Check docs/logs)
+                // Based on previous logs: "Check Result: 1 (Berhasil)"
+                if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
+                    // Update to PROCESSING / SUCCESS
+                    console.log(`✅ [MANUAL CHECK] Payment found SUCCESS for ${trx.invoice}`);
+
+                    await prisma.transaction.update({
+                        where: { id: trx.id },
+                        data: {
+                            status: 'PROCESSING',
+                            paymentUrl: null // Clear payment URL as it's paid
+                        }
+                    });
+
+                    // Trigger WA Receipt
+                    let targetWa = trx.guestContact;
+                    if (!targetWa && trx.userId) {
+                        try {
+                            const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
+                            if (u.length > 0) targetWa = u[0].phoneNumber;
+                        } catch (e) { }
+                    }
+
+                    if (targetWa) {
+                        const waMsg = `*PEMBAYARAN DITERIMA* 💰\nInvoice: *${trx.invoice}*\nStatus: LUNAS\n\nSistem sedang memproses pesanan Anda. Mohon tunggu 1-3 menit.`;
+                        whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
+                    }
+
+                    // Proceed to Check Provider (Apigames)
+                    // If we just detected payment, we should also Trigger Topup if not done
+                    // But usually PROCESSING status triggers it via webhook? 
+                    // No, webhook triggers function. Here we must trigger manually.
+                    processGameTopup(trx.id).catch(console.error);
+
+                    // Return success so frontend reloads
+                    return res.json({ success: true, message: "Payment Verified! Processing Order...", data: { status: 'PROCESSING' } });
+                }
+            }
         }
 
-        // 2. Check Provider Status
+        // B. Check Provider Status (Apigames)
+        // Only if status is PROCESSING or SUCCESS (or we just updated it)
         const result = await apigamesService.checkTransaction(trx.invoice);
 
         if (result.success && result.data) {
@@ -747,6 +790,62 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error("Check Status Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// DEV: Mock Provider Callback
+export const mockApigamesCallback = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.body;
+        const trx = await prisma.transaction.findUnique({ where: { id } });
+        if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
+
+        // Simulate Apigames Webhook Request
+        const mockBody = {
+            ref_id: trx.providerTrxId || `MOCK_PROV_${Date.now()}`,
+            trx_id: trx.providerTrxId || `MOCK_PROV_${Date.now()}`,
+            status: 'Sukses',
+            sn: 'MOCK_SN_1234567890',
+            message: 'Mock Success'
+        };
+
+        // If providerTrxId is null, force update it
+        if (!trx.providerTrxId) {
+            await prisma.transaction.update({ where: { id }, data: { providerTrxId: `MOCK_REQ_${id}` } });
+            mockBody.ref_id = `MOCK_REQ_${id}`;
+            mockBody.trx_id = `MOCK_REQ_${id}`;
+        }
+
+        console.log(`🛠️ [DEV] Mocking Apigames Callback for ${trx.invoice}`);
+
+        await prisma.transaction.update({
+            where: { id },
+            data: {
+                status: 'SUCCESS',
+                providerStatus: 'Sukses',
+                sn: mockBody.sn,
+                updatedAt: new Date()
+            }
+        });
+
+        // Trigger WA
+        let targetWa = trx.guestContact;
+        if (!targetWa && trx.userId) {
+            try {
+                const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
+                if (u.length > 0) targetWa = u[0].phoneNumber;
+            } catch (e) { }
+        }
+        if (targetWa) {
+            const waMsg = `*TOPUP SUKSES* ✅ (Mock Dev)\nOrder: *${trx.invoice}*\nSN/Ref: ${mockBody.sn}\n\nTerima kasih!`;
+            whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
+        }
+
+        res.json({ success: true, message: "Mock Callback Success" });
+
+    } catch (error: any) {
+        console.error("Mock Callback Error:", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
