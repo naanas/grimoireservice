@@ -37,10 +37,10 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use('/api', transactionRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/voucher', voucherRoutes);
+app.use('/api', transactionRoutes);
 
 app.get('/', (req, res) => {
     res.send('Grimoire Coins Backend is Running! 🩸');
