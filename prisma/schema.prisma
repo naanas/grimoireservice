@@ -85,8 +85,10 @@ model Transaction {
   type            String            @default("TOPUP") // TOPUP or DEPOSIT?
   zoneId          String?           // Game Server (Nullable)
   
-  amount          Float             // Total Paid
+  amount          Float             // Total Paid (After Discount)
   adminFee        Float             @default(0)
+  discountAmount  Float             @default(0)
+  voucherCode     String?
   
   status          TransactionStatus @default(PENDING)
   paymentMethod   String            // QRIS, VA_BCA, etc.
@@ -101,4 +103,38 @@ model Transaction {
   updatedAt       DateTime          @updatedAt
 
   @@map("transactions")
+}
+
+model Banner {
+  id        String   @id @default(uuid())
+  title     String?  // Optional title for alt text or overlay
+  imageUrl  String   // URL to image
+  linkUrl   String?  // Optional: Redirect when clicked
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("banners")
+}
+
+enum VoucherType {
+  FIXED
+  PERCENTAGE
+}
+
+model Voucher {
+  id          String      @id @default(uuid())
+  code        String      @unique
+  type        VoucherType @default(FIXED)
+  amount      Float       // 10000 or 10 (if %)
+  minPurchase Float       @default(0)
+  maxDiscount Float?      // Max discount for % type
+  stock       Int         @default(0)
+  isActive    Boolean     @default(true)
+  expiresAt   DateTime
+  
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  @@map("vouchers")
 }
