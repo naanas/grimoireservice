@@ -5,6 +5,7 @@ export interface AuthRequest extends Request {
     user?: any;
 }
 
+
 export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -19,3 +20,15 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
         res.status(403).json({ success: false, message: 'Invalid Token' });
     }
 };
+
+export const verifyAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+        return res.status(401).json({ success: false, message: "Unauthorized: Please login first" });
+    }
+
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ success: false, message: "Access Denied: Admins Only" });
+    }
+    next();
+};
+
