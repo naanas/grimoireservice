@@ -13,7 +13,8 @@ export const checkVoucher = async (req: Request, res: Response) => {
         });
 
         if (!voucher) {
-            return res.status(404).json({ success: false, message: "Voucher not found" });
+            console.warn(`[Voucher] Code not found: ${code}`);
+            return res.status(400).json({ success: false, message: "Voucher not found" });
         }
 
         if (!voucher.isActive) {
