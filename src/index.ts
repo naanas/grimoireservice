@@ -12,6 +12,7 @@ import authRoutes from './routes/auth.route.js';
 
 import contentRoutes from './routes/content.route.js';
 import voucherRoutes from './routes/voucher.route.js';
+import adminRoutes from './routes/admin.route.js';
 
 app.use(cors());
 app.use(express.json());
@@ -41,6 +42,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/voucher', voucherRoutes);
 app.use('/api', transactionRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.get('/', (req, res) => {
     res.send('Grimoire Coins Backend is Running! 🩸');
