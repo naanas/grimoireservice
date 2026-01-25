@@ -5,7 +5,7 @@ export const createTransactionSchema = z.object({
     userId: z.string().min(1, 'User/Target ID (Game ID) is required'),
     zoneId: z.string().optional(),
     paymentMethod: z.enum(['BALANCE', 'QRIS', 'VA', 'EWALLET', 'RETAIL', 'Qris', 'CreditCard'], {
-        errorMap: () => ({ message: 'Invalid Payment Method' })
+        error: () => ({ message: 'Invalid Payment Method' })
     }),
     authUserId: z.string().optional(), // Optional, for guest tracking if needed
     guestContact: z.string().optional(), // WhatsApp number for notifications

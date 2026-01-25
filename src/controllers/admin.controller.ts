@@ -55,10 +55,20 @@ export const getAllTransactions = async (req: Request, res: Response) => {
         const limit = Number(req.query.limit) || 20;
         const skip = (page - 1) * limit;
         const status = req.query.status as string; // Optional filter
+        const search = req.query.search as string; // Search filter
 
         const whereClause: any = {};
         if (status && status !== 'ALL') {
             whereClause.status = status;
+        }
+
+        if (search) {
+            whereClause.OR = [
+                { invoice: { contains: search, mode: 'insensitive' } },
+                { user: { name: { contains: search, mode: 'insensitive' } } },
+                { user: { email: { contains: search, mode: 'insensitive' } } },
+                { guestContact: { contains: search, mode: 'insensitive' } }
+            ];
         }
 
         const [total, transactions] = await Promise.all([
