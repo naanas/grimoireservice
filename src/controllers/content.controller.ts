@@ -2,15 +2,19 @@ import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 
 // GET /api/content/banners
+// GET /api/content/banners
 export const getActiveBanners = async (req: Request, res: Response) => {
     try {
-        const banners = await prisma.$queryRaw`SELECT * FROM "banners" WHERE "isActive" = true ORDER BY "createdAt" DESC`;
+        console.log("📢 [Content] Fetching Banners...");
+        const banners = await prisma.banner.findMany({
+            where: { isActive: true },
+            orderBy: { createdAt: 'desc' }
+        });
 
-        // Ensure array is empty if none found (Raw query might return nulls if not careful, but usually []).
-        // Using raw query to be safe against stale Prisma Client
-        res.json({ success: true, data: banners || [] });
+        console.log(`✅ [Content] Found ${banners.length} banners`);
+        res.json({ success: true, data: banners });
     } catch (error: any) {
-        console.error("Fetch Banners Error:", error);
+        console.error("❌ Fetch Banners Error:", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
