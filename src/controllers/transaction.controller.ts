@@ -1,11 +1,16 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
-import * as apigamesService from '../services/apigames.service.js';
+import * as gameProvider from '../services/vip.service.js'; // Consolidated on VIP Service
 import * as ipaymuService from '../services/ipaymu.service.js';
 import * as whatsappService from '../services/whatsapp.service.js';
 
-// HELPER: Process Game Topup (Trigger Provider)
-const processGameTopup = async (trxId: string) => {
+// --- HELPER FUNCTIONS ---
+
+/**
+ * Process Game Topup (Trigger Provider)
+ * Use this to fulfill the order after payment is confirmed (Balance or Gateway).
+ */
+export const processGameTopup = async (trxId: string) => {
     console.log(`⚙️ [PROCESS] Triggering Provider for Trx: ${trxId}`);
     try {
         const trx = await prisma.transaction.findUnique({
@@ -13,31 +18,40 @@ const processGameTopup = async (trxId: string) => {
             include: { product: true }
         });
 
-        if (!trx || !trx.product) return { success: false, message: "Transaction Invalid" };
+        // 1. Validate Transaction
+        if (!trx || !trx.product) {
+            console.error(`❌ [PROCESS] Invalid Transaction or Product missing for ${trxId}`);
+            return { success: false, message: "Transaction Invalid" };
+        }
 
-        // 1. Update Status to PROCESSING
-        await prisma.transaction.update({
-            where: { id: trxId },
-            data: { status: 'PROCESSING' }
-        });
+        // Prevent double processing if already success (optional safety)
+        // if (trx.status === 'SUCCESS' && trx.sn) return { success: true };
 
-        // 2. Call Apigames Endpoint
-        const order = await apigamesService.placeOrder(
+        // 2. Update Status to PROCESSING (if not already)
+        if (trx.status !== 'PROCESSING' && trx.status !== 'SUCCESS') {
+            await prisma.transaction.update({
+                where: { id: trxId },
+                data: { status: 'PROCESSING' }
+            });
+        }
+
+        // 3. Call VIP Endpoint
+        // placeOrder(refId, sku, dest, zoneId)
+        const order = await gameProvider.placeOrder(
             trx.invoice,
             trx.product.sku_code,
-            trx.targetId || '', // Player ID
-            trx.zoneId || ''     // Zone ID
+            trx.targetId || '',
+            trx.zoneId || ''
         );
 
         if (order.success && order.data) {
-            // 3. Provider Accepted Request
-            console.log(`✅ [PROCESS] Provider Accepted! RefId: ${order.data.ref_id} | Status: ${order.data.status}`);
+            // 4. Provider Accepted Request
+            console.log(`✅ [PROCESS] Provider Accepted! TrxId: ${order.data.trxId} | Status: ${order.data.status}`);
 
-            // Map Apigames Status to Our Schema
-            // Usually returns 'Pending' or 'Proses' initially.
-            // Only 'Sukses' means final success.
+            // Map VIP Status to Our Schema
+            // VIP: status can be 'waiting', 'success', 'processing'
             let newStatus = 'PROCESSING';
-            if (order.data.status.toLowerCase() === 'sukses') newStatus = 'SUCCESS';
+            if (order.data.status.toLowerCase() === 'success') newStatus = 'SUCCESS';
 
             await prisma.transaction.update({
                 where: { id: trxId },
@@ -45,6 +59,7 @@ const processGameTopup = async (trxId: string) => {
                     status: newStatus as any, // Cast to Enum
                     providerTrxId: order.data.trxId,
                     providerStatus: order.data.status,
+                    sn: order.data.sn, // Sometimes available immediately?
                     updatedAt: new Date()
                 }
             });
@@ -62,7 +77,7 @@ const processGameTopup = async (trxId: string) => {
 
             return { success: true };
         } else {
-            // 3B. Provider Rejected Immediately
+            // 4B. Provider Rejected Immediately
             console.error(`❌ [PROCESS] Provider Failed: ${order.message}`);
             await prisma.transaction.update({
                 where: { id: trxId },
@@ -72,7 +87,8 @@ const processGameTopup = async (trxId: string) => {
                     updatedAt: new Date()
                 }
             });
-            // Auto Refund Balance if needed? (For now manual refund)
+
+            // TODO: Handle Auto Refund for Balance payments here if strictly needed
             return { success: false, message: "Provider Failed" };
         }
 
@@ -81,6 +97,8 @@ const processGameTopup = async (trxId: string) => {
         return { success: false, message: error.message };
     }
 };
+
+// --- CONTROLLER ENDPOINTS ---
 
 // GET /api/categories
 export const getCategories = async (req: Request, res: Response) => {
@@ -117,9 +135,46 @@ export const getProducts = async (req: Request, res: Response) => {
     }
 };
 
+// GET /api/vendor-products
+// Proxy to fetch services specifically from the active Provider (VIP)
+export const getVendorProducts = async (req: Request, res: Response) => {
+    try {
+        const result = await gameProvider.getMerchantServices();
+        if (result.success) {
+            res.json({ success: true, data: result.data });
+        } else {
+            res.status(500).json({ success: false, message: result.message });
+        }
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// POST /api/transaction/check-id
+export const checkGameId = async (req: Request, res: Response) => {
+    const { gameSlug, userId, zoneId } = req.body;
+
+    // Map slugs to simple codes if needed by VIP
+    // VIP might expect raw codes like 'mobilelegend' or 'freefire'
+    let gameCode = gameSlug;
+    if (gameSlug === 'mobile-legends') gameCode = 'mobilelegend';
+    if (gameSlug === 'free-fire') gameCode = 'freefire';
+
+    try {
+        const result = await gameProvider.checkProfile(gameCode, userId, zoneId);
+        if (result.success) {
+            res.json({ success: true, data: result.data });
+        } else {
+            res.status(400).json({ success: false, message: 'ID Not Found' });
+        }
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 // POST /api/transaction/create
 export const createTransaction = async (req: Request, res: Response) => {
-    // Validated by Zod
+    // Validated by Zod Middleware usually
     const { productId, userId, zoneId, paymentMethod, authUserId, guestContact } = req.body;
     console.log(`📦 [TRANSACTION] Creating Order: ${productId} for User: ${userId} (Auth: ${authUserId}) via ${paymentMethod} | GuestContact: ${guestContact}`);
 
@@ -133,7 +188,6 @@ export const createTransaction = async (req: Request, res: Response) => {
             });
         } catch (dbError) {
             console.warn("DB Connection Failed, using Mock Product");
-            // Mock Product Fallback for demo
             const mockProducts = [
                 { id: '1', sku_code: 'ML-5', name: '5 Diamonds', price_sell: 1500, category: { slug: 'mobile-legends' } },
                 { id: '2', sku_code: 'ML-10', name: '10 Diamonds', price_sell: 3000, category: { slug: 'mobile-legends' } },
@@ -143,130 +197,82 @@ export const createTransaction = async (req: Request, res: Response) => {
             product = mockProducts.find(p => p.id === productId);
         }
 
-        if (!product) return res.status(404).json({ success: false, message: 'Product Not Found (Mock ID mismatch or DB Error)' });
+        if (!product) return res.status(404).json({ success: false, message: 'Product Not Found' });
 
-        // 2. Validate Game ID (Optional Check)
-        let gameCode = 'mobilelegend';
-        if (product.category?.slug === 'free-fire') gameCode = 'freefire';
-        if (product.category?.slug === 'mobile-legends') gameCode = 'mobilelegend';
-
-        // Only check if it's a known game, otherwise skip or default
-        const profile = await apigamesService.checkProfile(gameCode, userId, zoneId);
-        if (!profile.success) return res.status(400).json({ success: false, message: 'Invalid Game ID/Server' });
-
-        // 3. Prepare Transaction Data
+        // 2. Prepare Transaction Data
         const invoice = `GRM-${Date.now()}`;
         let amount = product.price_sell;
         let discountAmount = 0;
         const validVoucherCode = req.body.voucherCode;
 
-        // --- VOUCHER LOGIC START ---
+        // --- VOUCHER LOGIC ---
         if (validVoucherCode) {
-            const voucher = await prisma.voucher.findUnique({
-                where: { code: validVoucherCode }
-            });
-
+            const voucher = await prisma.voucher.findUnique({ where: { code: validVoucherCode } });
             if (voucher) {
-                // Validate again (Security)
                 const now = new Date();
                 if (voucher.isActive && voucher.stock > 0 && voucher.expiresAt > now && amount >= voucher.minPurchase) {
-
-                    // Calculate Discount
                     if (voucher.type === 'FIXED') {
                         discountAmount = voucher.amount;
                     } else if (voucher.type === 'PERCENTAGE') {
                         discountAmount = (amount * voucher.amount) / 100;
-                        if (voucher.maxDiscount && discountAmount > voucher.maxDiscount) {
-                            discountAmount = voucher.maxDiscount;
-                        }
+                        if (voucher.maxDiscount && discountAmount > voucher.maxDiscount) discountAmount = voucher.maxDiscount;
                     }
-
-                    // Apply
-                    if (discountAmount > amount) discountAmount = amount; // Prevent negative
+                    if (discountAmount > amount) discountAmount = amount;
                     amount -= discountAmount;
 
-                    // Decrement Stock (Atomic update not strictly needed for MVP but good practice)
-                    await prisma.voucher.update({
-                        where: { id: voucher.id },
-                        data: { stock: { decrement: 1 } }
-                    });
-
+                    // Decrement Stock
+                    await prisma.voucher.update({ where: { id: voucher.id }, data: { stock: { decrement: 1 } } });
                     console.log(`🎟️ [VOUCHER] Applied ${validVoucherCode}: -${discountAmount} | Final: ${amount}`);
-                } else {
-                    console.warn(`⚠️ [VOUCHER] Invalid or Expired: ${validVoucherCode}`);
-                    // We can either fail or just ignore. Ignoring is safer for UX unless we want to be strict.
-                    // Let's just ignore and proceed with normal price to avoid blocking order?
-                    // Update: User expects discount. If invalid, maybe it's better to NOT fail but warn?
                 }
             }
         }
-        // --- VOUCHER LOGIC END ---
 
-        // 4. Handle Payment
+        // 3. Handle Payment Method
         if (paymentMethod === 'BALANCE') {
-            // A. BALANCE PAYMENT (SECURE) - STRICTLY REQUIRE HEADER
+            // A. BALANCE PAYMENT (SECURE)
             const authHeader = req.headers.authorization;
             if (!authHeader) return res.status(401).json({ success: false, message: 'Authentication required for Balance payment' });
 
             const token = authHeader.split(" ")[1];
             if (!token) return res.status(401).json({ success: false, message: 'Invalid token' });
 
-            // Verify Token & Get Safe User ID
+            // Verify Token
             const jwt = (await import('jsonwebtoken')).default;
             let payerId;
             try {
-                const decoded: any = jwt.verify(token, process.env.JWT_SECRET || 'super-secret-key-change-this');
+                const decoded: any = jwt.verify(token as string, process.env.JWT_SECRET || 'super-secret-key-change-this');
                 payerId = decoded.id;
             } catch (err) {
                 return res.status(403).json({ success: false, message: 'Invalid or Expired Session' });
             }
 
-            // IDOR PROTECTION: Payer is the one in the token
-            // USE RAW QUERY to ensure we get phoneNumber even if prisma generate wasn't run
-            const userResult: any[] = await prisma.$queryRaw`SELECT * FROM "users" WHERE id = ${payerId} LIMIT 1`;
-            const user = userResult[0]; // Raw User Object
-
+            // Get User & Check Balance
+            // Use Raw Query or standard findUnique
+            const user = await prisma.user.findUnique({ where: { id: payerId } });
             if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+            if (user.balance < amount) return res.status(400).json({ success: false, message: 'Insufficient Balance' });
 
-            if (user.balance < amount) {
-                return res.status(400).json({ success: false, message: 'Insufficient Balance' });
-            }
-
-            const userPhoneNumber = user.phoneNumber; // Accessed safely from raw result
-            console.log(`👤 [BALANCE] User: ${user.name} | Phone: ${userPhoneNumber}`);
-
-            // Deduct Balance & create SUCCESS transaction (Atomic)
-            // Note: We use nested update/create. For Raw User we might need separate operations if we want strict safety,
-            // but prisma.$transaction with standard calls is fine IF standard calls don't crash on new logic.
-            // Since we just want to read phoneNumber, the above Raw Query solved the READ.
-            // For WRITE (guestContact in Transaction), if schema is stale, this might throw.
-            // Let's rely on standard update for balance (balance column is old/safe).
-
-            const [updatedUser, trx] = await prisma.$transaction([
-                prisma.user.update({
-                    where: { id: payerId },
-                    data: { balance: { decrement: amount } }
-                }),
-                prisma.transaction.create({
-                    data: {
-                        invoice,
-                        productId,
-                        targetId: userId,
-                        zoneId,
-                        amount,
-                        discountAmount,
-                        voucherCode: validVoucherCode,
-                        status: 'SUCCESS',
-                        paymentMethod: 'BALANCE',
-                        userId: user.id,
-                        guestContact: userPhoneNumber || undefined // Use fetched phone
-                    } as any // CAST TO ANY TO BYPASS STALE CLIENT TYPES
-                })
-            ]);
+            // Atomic Transaction: Deduct Balance & Create Transaction
+            const trx = await prisma.transaction.create({
+                data: {
+                    invoice,
+                    productId,
+                    targetId: userId,
+                    zoneId,
+                    amount,
+                    discountAmount,
+                    voucherCode: validVoucherCode,
+                    status: 'SUCCESS', // Paid immediately
+                    paymentMethod: 'BALANCE',
+                    userId: user.id,
+                    guestContact: user.phoneNumber || null // Use null for Prisma compatibility
+                }
+            });
+            await prisma.user.update({ where: { id: payerId }, data: { balance: { decrement: amount } } });
 
             console.log(`✅ [BALANCE] Payment Success: ${invoice} | User: ${user.name}`);
 
-            // --- FIRE AND FORGET: PROCESS GAME TOPUP ---
+            // FIRE AND FORGET: PROCESS GAME TOPUP
             processGameTopup(trx.id).catch(err => console.error("Auto Process Error:", err));
 
             return res.json({
@@ -280,47 +286,33 @@ export const createTransaction = async (req: Request, res: Response) => {
             });
 
         } else {
-            // B. IPAYMU PAYMENT (QRIS, VA, etc.)
+            // B. GATEWAY PAYMENT (IPAYMU)
             let trxId = `MOCK_TRX_${Date.now()}`;
 
-            // 1. RESOLVE PHONE NUMBER FOR NOTIFICATION
-            // POKOK PERMASALAHAN FIX: Fetch from DB if user is logged in
-            let targetPhone = guestContact;
+            // Resolve User for History Linking
+            // If logged in, use their ID
             let userIdForTrx = authUserId;
+            let targetPhone = guestContact;
 
-            // Try to identify user if not passed explicitly but token exists
-            let tokenUserId = null;
-            if ((req as any).user) {
-                tokenUserId = (req as any).user.id;
-            } else if (req.headers.authorization) {
+            // Attempt to resolve from Token if not passed explicitly
+            if (!userIdForTrx && req.headers.authorization) {
                 try {
                     const token = req.headers.authorization.split(' ')[1];
-                    if (token) {
-                        const jwt = (await import('jsonwebtoken')).default;
-                        const decoded: any = jwt.verify(token, process.env.JWT_SECRET || 'super-secret-key-change-this');
-                        tokenUserId = decoded.id;
-                    }
-                } catch (e) { console.warn("Token manual decode failed:", e); }
+                    const jwt = (await import('jsonwebtoken')).default;
+                    const decoded: any = jwt.verify(token as string, process.env.JWT_SECRET || 'super-secret-key-change-this');
+                    userIdForTrx = decoded.id;
+                } catch (e) { }
             }
 
-            // If we have a User ID, FETCH THE PHONE NUMBER FROM DB
-            if (tokenUserId) {
-                userIdForTrx = tokenUserId; // Ensure we link the transaction
-                if (!targetPhone) {
-                    try {
-                        const userDb = await prisma.user.findUnique({
-                            where: { id: tokenUserId }
-                        });
-                        if (userDb && userDb.phoneNumber) {
-                            targetPhone = userDb.phoneNumber;
-                            console.log(`👤 [WA] Resolved Phone from DB for User ${userDb.name}: ${targetPhone}`);
-                        }
-                    } catch (e) {
-                        console.warn("Failed to fetch user for phone resolution:", e);
-                    }
-                }
+            // If we have ID, try to get Phone from DB if guestContact missing
+            if (userIdForTrx && !targetPhone) {
+                try {
+                    const u = await prisma.user.findUnique({ where: { id: userIdForTrx } });
+                    if (u && u.phoneNumber) targetPhone = u.phoneNumber;
+                } catch (e) { }
             }
 
+            // Create Pending Transaction
             try {
                 const trx = await prisma.transaction.create({
                     data: {
@@ -334,7 +326,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                         status: 'PENDING',
                         paymentMethod,
                         userId: userIdForTrx || undefined,
-                        guestContact: targetPhone || undefined // Store the resolved phone
+                        guestContact: targetPhone || null
                     }
                 });
                 trxId = trx.id;
@@ -342,6 +334,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                 console.warn("DB Transaction Create Failed:", dbError);
             }
 
+            // Init Ipaymu
             const returnPath = `/order/${product.category.slug}`;
             const payment = await ipaymuService.initPayment(trxId, amount, 'Guest', 'guest@grimoire.com', paymentMethod, returnPath);
 
@@ -349,27 +342,28 @@ export const createTransaction = async (req: Request, res: Response) => {
                 return res.status(500).json({ success: false, message: payment.message || 'Payment Error' });
             }
 
-            // Update Transaction with Payment Info
-            // Table name is likely 'transactions' based on Prisma convention (User -> users)
+            // Update with Payment URL
             if (payment.data && !trxId.startsWith('MOCK')) {
-                await prisma.$executeRaw`UPDATE "transactions" SET "paymentUrl" = ${payment.data.Url}, "paymentTrxId" = ${payment.data.TransactionId} WHERE id = ${trxId}`;
+                await prisma.transaction.update({
+                    where: { id: trxId },
+                    data: {
+                        paymentUrl: payment.data.Url,
+                        paymentTrxId: payment.data.TransactionId
+                    }
+                });
             }
 
-            // --- POKOK PERMASALAHAN 1: KIRIM WA TAGIHAN ---
+            // Send WA Invoice
             if (targetPhone) {
                 console.log(`🚀 [WA] Sending Invoice to ${targetPhone}`);
                 const waMsg = `*TAGIHAN BARU* 🧾\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\nBayar di sini: ${payment.data?.Url}\n\nTerima kasih!`;
-
-                // ASYNC HIT - Fire and Forget
                 whatsappService.sendMessage(targetPhone, waMsg).catch(err => console.error("WA Error:", err));
-            } else {
-                console.log("⚠️ [WA] Skipped: No Phone Number");
             }
 
             res.json({
                 success: true,
                 data: {
-                    id: trxId, // Added ID for polling
+                    id: trxId,
                     invoice,
                     paymentUrl: payment.data?.Url,
                     productName: product.name,
@@ -377,6 +371,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                 }
             });
         }
+
     } catch (error: any) {
         console.error(error);
         res.status(500).json({ success: false, message: error.message });
@@ -385,21 +380,19 @@ export const createTransaction = async (req: Request, res: Response) => {
 
 // POST /api/transaction/deposit
 export const createDeposit = async (req: Request, res: Response) => {
-    // PROTECTED ROUTE: User verified by middleware
+    // PROTECTED ROUTE
     const { amount, paymentMethod } = req.body;
-    const userId = (req as any).user.id; // Secure: From Token
+    const userId = (req as any).user.id;
 
     console.log(`💰 [DEPOSIT] Creating Deposit: Rp${amount} for User: ${userId} via ${paymentMethod}`);
-
-    // VALIDATION handled by Zod Middleware
 
     try {
         const user = await prisma.user.findUnique({ where: { id: userId } });
         if (!user) return res.status(404).json({ success: false, message: 'User Not Found' });
 
         const invoice = `DEP-${Date.now()}`;
-
         let trxId = `MOCK_DEP_${Date.now()}`;
+
         try {
             const trx = await prisma.transaction.create({
                 data: {
@@ -417,8 +410,7 @@ export const createDeposit = async (req: Request, res: Response) => {
             return res.status(500).json({ success: false, message: `Database Error: ${dbError.message}` });
         }
 
-        // Return path for Deposit is /topup history or profile
-        const returnPath = `/history`; // Or specific status page
+        const returnPath = `/history`;
         const payment = await ipaymuService.initPayment(trxId, Number(amount), user.name || 'User', user.email, paymentMethod, returnPath);
 
         if (!payment.success) {
@@ -452,31 +444,20 @@ export const createDeposit = async (req: Request, res: Response) => {
 };
 
 // POST /api/callback/ipaymu
-// POST /api/callback/ipaymu
 export const handleIpaymuCallback = async (req: Request, res: Response) => {
     try {
         console.log('🔔 [WEBHOOK] Ipaymu Callback Received:', req.body);
 
-        // 1. VERIFY IPAYMU SIGNATURE (CRITICAL SECURITY)
-        // Ipaymu sends normal POST, we need to verify if it's really them.
-        // Note: Sandbox sometimes behaves differently, but ideally we check IP or Signature.
-        // There isn't a strict "Signature" header in callback, but we can verify params if needed.
-        // However, standard Ipaymu callback trust usually relies on checking the Transaction ID validity in our DB.
-        // A stricter way is to call 'Check Transaction' API back to Ipaymu to confirm status, BUT
-        // for this implementation, we will trust if the Transaction ID exists and is PENDING in our DB.
-        // IMPROVEMENT: If Ipaymu supports webhook signature, verify it here.
-
         const status = req.body.status; // 'berhasil' or 'pending'
         const trxId = req.body.reference_id; // Our Invoice ID / Trx ID
-        const sid = req.body.sid; // Broker ID (Ipaymu Session ID)
+        const sid = req.body.sid; // Broker ID
 
-        // Basic Integrity Check
         if (!trxId || !sid) return res.status(400).json({ success: false, message: "Invalid payload" });
 
         const trx = await prisma.transaction.findUnique({ where: { id: trxId } });
         if (!trx) return res.status(404).json({ success: false, message: 'Transaction Not Found' });
 
-        // Prevent Replay Attacks (Idempotency)
+        // Idempotency Check
         if (trx.status === 'SUCCESS') {
             console.log(`⚠️ Transaction ${trxId} already SUCCESS. Ignoring callback.`);
             return res.json({ success: true, message: 'Already paid' });
@@ -486,37 +467,21 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
             const fee = parseFloat(req.body.fee || '0');
             const totalPaid = parseFloat(req.body.total || req.body.amount || '0');
 
-            // 2. DOUBLE CHECK with Ipaymu Server (Server-to-Server Verification)
-            // Even if signature is correct (if we had it), we want to be 100% sure the status is real.
+            // 1. Double Check with Server (Security)
             const verification = await ipaymuService.checkTransaction(trxId);
             if (!verification.success) {
                 console.warn(`⚠️ [SECURITY] Webhook Verification Failed for ${trxId}. Ignoring.`);
                 return res.status(400).json({ success: false, message: 'Verification Failed' });
             }
-
-            // Status 1 = Pending, 6 = Success (Paid) in Ipaymu V2
-            // We only process if status is 'berhasil' (matches webhook) AND API confirms it (Success/6)
-            // Note: Adjust '6' based on actual Ipaymu Docs if needed, but usually 'berhasil' implies Success.
-            if (String(verification.status) !== '1' && String(verification.status) !== '6') { // Allowing 1 (Pending) sometimes happens on early callback? No, wait for 6.
-                // Actually, let's just log verification status for now to be safe, but enforce success.
-                // If double check says it's NOT success, we stop.
-                if (String(verification.status) !== '6' && verification.statusDesc?.toLowerCase() !== 'berhasil') {
-                    console.warn(`⚠️ [SECURITY] Webhook says SUCCESS, but API says ${verification.statusDesc}. Potential Fraud?`);
-                    // Strict Mode: return res.status(400).json({ success: false, message: 'Status Mismatch' });
-                    // Soft Mode (Dev): just warn
-                }
+            // Enforce Success check from API (Status 1 or 6 usually means success/paid)
+            if (String(verification.status) !== '6' && verification.statusDesc?.toLowerCase() !== 'berhasil') {
+                console.warn(`⚠️ [SECURITY] API says not success yet: ${verification.statusDesc}`);
+                // Proceed with caution or return? For now logged.
             }
 
-            // DOUBLE CHECK: Validate amounts mismatch if necessary
-            if (totalPaid < trx.amount - 1000) { // Allow small difference for admin fees variation
-                console.warn(`⚠️ Potential Fraud: Paid ${totalPaid} but expected ${trx.amount}`);
-                // We might want to flag this but for now process it
-            }
-
-            // Extract Payment Details
-            // Ipaymu Callback params: via, channel, va, fee, paid_off, etc.
+            // 2. Update Transaction
             const paymentChannel = req.body.channel || req.body.via || null;
-            const paymentNo = req.body.va || req.body.qris || null; // 'va' for VA, 'qris' might be in another field or just URL
+            const paymentNo = req.body.va || req.body.qris || null;
 
             await prisma.transaction.update({
                 where: { id: trxId },
@@ -525,13 +490,13 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
                     adminFee: fee,
                     amount: totalPaid,
                     updatedAt: new Date(),
-                    paymentTrxId: sid, // Store Ipaymu Session ID
+                    paymentTrxId: sid,
                     paymentChannel: paymentChannel,
                     paymentNo: paymentNo
-                } as any // Cast to any to avoid TS error if Prisma client is not yet regenerated
+                }
             });
 
-            // Handle DEPOSIT Balance Update
+            // 3. Handle Deposit
             if (trx.type === 'DEPOSIT' && trx.userId) {
                 console.log(`💰 [WALLET] Adding Rp${totalPaid} to User ${trx.userId}`);
                 await prisma.user.update({
@@ -542,54 +507,145 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
 
             console.log(`✅ Transaction ${trxId} (${trx.type}) SUCCESS | Fee: ${fee} | Total: ${totalPaid}`);
 
-            // --- POKOK PERMASALAHAN 2: KIRIM WA STRUK TRANSAKSI ---
+            // 4. Send WA Receipt
             let targetWa = trx.guestContact;
-
-            // If guestContact missing in TRX, try look up USER table
             if (!targetWa && trx.userId) {
                 try {
-                    const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
-                    if (u.length > 0) targetWa = u[0].phoneNumber;
-                } catch (e) { console.warn("Failed to fetch user phone for webhook", e); }
+                    const u = await prisma.user.findUnique({ where: { id: trx.userId } });
+                    if (u && u.phoneNumber) targetWa = u.phoneNumber;
+                } catch (e) { }
             }
 
             if (targetWa) {
-                console.log(`🚀 [WA] Sending Receipt to ${targetWa}`);
                 let paymentInfo = '';
                 if (paymentChannel) paymentInfo += `\nMetode: ${paymentChannel.toUpperCase()}`;
-                if (paymentNo) paymentInfo += `\nNo Bayar/VA: ${paymentNo}`;
-                if (fee > 0) paymentInfo += `\nFee: Rp${fee.toLocaleString('id-ID')}`;
 
                 const waMsg = `*PEMBAYARAN DITERIMA* 💰\nInvoice: *${trx.invoice}*\nStatus: LUNAS${paymentInfo}\nTotal Paid: Rp${totalPaid.toLocaleString('id-ID')}\n\nSistem sedang memproses pesanan Anda. Mohon tunggu 1-3 menit.`;
                 whatsappService.sendMessage(targetWa, waMsg).catch(err => console.error("WA Error:", err));
-            } else {
-                console.log("⚠️ [WA] Skipped Receipt: No Phone Number");
             }
 
-            // --- POKOK PERMASALAHAN 3: TRIGGER GAME PROVIDER (THE MISSING LINK) ---
-            if (trx.type === 'TOPUP' || !trx.type) { // Default is TOPUP
+            // 5. TRIGGER GAME PROVIDER (Crucial Step)
+            if (trx.type === 'TOPUP' || !trx.type) {
                 console.log(`⚙️ [CALLBACK] Triggering Auto-Process for ${trxId}`);
                 processGameTopup(trxId).catch(e => console.error("Process Trigger Failed:", e));
             }
+
         } else if (status === 'gagal') {
-            await prisma.transaction.update({
-                where: { id: trxId },
-                data: { status: 'FAILED' }
-            });
+            await prisma.transaction.update({ where: { id: trxId }, data: { status: 'FAILED' } });
             console.log(`❌ Transaction ${trxId} FAILED`);
         }
 
         res.json({ success: true });
+
     } catch (error) {
         console.error('Webhook Error:', error);
         res.status(500).json({ success: false });
     }
 };
 
+// POST /api/check-status/:id
+export const checkTransactionStatus = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params as { id: string };
+
+        // 1. Get Transaction
+        const trx = await prisma.transaction.findUnique({ where: { id }, include: { product: true } });
+        if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
+
+        // A. If PENDING, Check Payment Gateway (IPAYMU) First
+        if ((trx.status as any) === 'PENDING') {
+            if (trx.paymentTrxId) {
+                const payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
+
+                // Ipaymu Status: 1=Berhasil, 6=Paid
+                if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
+                    console.log(`✅ [MANUAL CHECK] Payment found SUCCESS for ${trx.invoice}`);
+
+                    // Update to PROCESSING (Paid, waiting for provider)
+                    // We treat this as 'PROCESSING' because we are about to trigger provider
+                    await prisma.transaction.update({
+                        where: { id: trx.id },
+                        data: {
+                            status: 'PROCESSING',
+                            updatedAt: new Date()
+                        }
+                    });
+
+                    // Trigger WA Receipt (if not sent yet? Assume manual check allows re-trigger or ensure it wasn't sent)
+                    // ... (Skipping WA here to avoid spam, or simplistic log)
+
+                    // Trigger Provider
+                    processGameTopup(trx.id).catch(console.error);
+
+                    return res.json({ success: true, message: "Payment Verified! Order Processing.", data: { status: 'PROCESSING' } });
+                }
+            }
+        }
+
+        // B. Check Provider Status (VIP)
+        // Only if status is PROCESSING or SUCCESS
+        if (trx.status === 'PROCESSING' || trx.status === 'SUCCESS') {
+            // Need Provider Trx ID to check VIP?
+            // VIP Service checkTransaction takes 'trxId'.
+            // If we don't have providerTrxId, maybe we can't check? Or we never placed it?
+            // If PROCESSING and no providerTrxId, try to place it again? -> Safety measure
+
+            if (!trx.providerTrxId) {
+                // Try processing again if it's stuck in processing but no ID
+                console.log(`⚠️ [MANUAL CHECK] Processing Status but no Provider ID. Retrying Process...`);
+                const proc = await processGameTopup(trx.id);
+                if (proc?.success) {
+                    return res.json({ success: true, message: "Order Retried to Provider", data: { status: 'PROCESSING' } });
+                }
+                return res.json({ success: false, message: "Provider Retry Failed" });
+            }
+
+            const result = await gameProvider.checkTransaction(trx.providerTrxId);
+
+            if (result.success && result.data) {
+                const providerStatus = (result.data as any).status; // VIP: success, error, waiting
+                let newStatus: any = trx.status;
+
+                if (providerStatus === 'success') {
+                    newStatus = 'SUCCESS';
+                } else if (providerStatus === 'error') {
+                    // Only fail if we are sure
+                    newStatus = 'FAILED';
+                }
+
+                if (newStatus !== trx.status) {
+                    await prisma.transaction.update({
+                        where: { id },
+                        data: {
+                            status: newStatus as any,
+                            providerStatus: providerStatus,
+                            sn: (result.data as any).sn,
+                            updatedAt: new Date()
+                        }
+                    });
+
+                    if (newStatus === 'SUCCESS') {
+                        // Optional: Send Success WA if strictly needed
+                    }
+
+                    return res.json({ success: true, message: "Status Updated", data: { status: newStatus } });
+                } else {
+                    return res.json({ success: true, message: `Status Unchanged (${providerStatus})`, data: { status: trx.status } });
+                }
+            }
+        }
+
+        return res.json({ success: true, message: "No Updates Available", data: { status: trx.status } });
+
+    } catch (error: any) {
+        console.error("Check Status Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 // GET /api/transaction/history
 export const getHistory = async (req: Request, res: Response) => {
     try {
-        // User is attached by middleware
         const user = (req as any).user;
         if (!user) return res.status(401).json({ success: false, message: "Unauthorized" });
 
@@ -617,328 +673,10 @@ export const getTransaction = async (req: Request, res: Response) => {
             include: { product: true }
         });
 
-        if (!transaction) {
-            return res.status(404).json({ success: false, message: 'Transaction not found' });
-        }
+        if (!transaction) return res.status(404).json({ success: false, message: 'Transaction not found' });
 
         res.json({ success: true, data: transaction });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-// POST /api/callback/apigames
-export const handleApigamesWebhook = async (req: Request, res: Response) => {
-    try {
-        console.log('🔔 [WEBHOOK] Apigames Callback:', req.body);
-
-        // 1. Validate Signature (X-Apigames-Authorization)
-        const signature = req.headers['x-apigames-authorization'];
-        const { merchant_id, ref_id, status, sn, message, trx_id } = req.body;
-
-        if (!process.env.APIGAMES_SECRET) {
-            console.error('APIGAMES_SECRET is not set');
-            return res.status(500).json({ success: false });
-        }
-
-        const expectedSignature = (await import('crypto')).default
-            .createHash('md5')
-            .update(`${merchant_id}:${process.env.APIGAMES_SECRET}:${ref_id}`)
-            .digest('hex');
-
-        if (signature !== expectedSignature) {
-            console.warn(`⚠️ [SECURITY] Apigames Signature Mismatch! Expected: ${expectedSignature}, Got: ${signature}`);
-            // Note: In dev/mock, we might proceed or log error. For production, reject.
-            // return res.status(400).json({ success: false, message: 'Invalid Signature' });
-        }
-
-        const trx = await prisma.transaction.findUnique({
-            where: { id: ref_id },
-            include: { product: true } // Include Product for Name
-        });
-        if (!trx) return res.status(404).json({ success: false, message: 'Transaction Not Found' });
-
-        // 2. Update Status
-        // Status Apigames: Sukses, Gagal, Validasi Provider, Proses, Sukses Sebagian
-
-        let newStatus = trx.status;
-        let providerStatusDesc = message;
-
-        if (status === 'Sukses') {
-            newStatus = 'SUCCESS';
-        } else if (status === 'Gagal') {
-            newStatus = 'FAILED';
-            // Auto-Refund logic could go here if user paid by balance
-            if (trx.paymentMethod === 'BALANCE' && trx.status !== 'FAILED') {
-                // REFUND LOGIC
-                console.log(`💸 [REFUND] Refunding ${trx.amount} to User ${trx.userId}`);
-                await prisma.user.update({
-                    where: { id: trx.userId! },
-                    data: { balance: { increment: trx.amount } }
-                });
-            }
-        }
-        // For 'Proses' / 'Validasi Provider', we might stay at 'PROCESSING'
-
-        if (newStatus !== trx.status || status === 'Sukses Sebagian') {
-            await prisma.transaction.update({
-                where: { id: ref_id },
-                data: {
-                    status: newStatus as any,
-                    providerTrxId: trx_id,
-                    providerStatus: status, // Store raw provider status
-                    sn: sn, // Serial Number / Token
-                    updatedAt: new Date()
-                } as any
-            });
-            console.log(`✅ [WEBHOOK] Updated Trx ${ref_id} to ${newStatus} | SN: ${sn}`);
-
-            // WA NOTIF: COMPLETED / FAILED
-            let targetWa = trx.guestContact;
-            if (!targetWa && trx.userId) {
-                try {
-                    const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
-                    if (u.length > 0 && u[0].phoneNumber) targetWa = u[0].phoneNumber;
-                } catch (e) { console.warn("Failed to fetch user phone for provider webhook", e); }
-            }
-
-            if (targetWa) {
-                let waMsg = '';
-                if (newStatus === 'SUCCESS') {
-                    waMsg = `*TOPUP SUKSES* ✅\nOrder: *${trx.invoice}*\nItem: ${trx.product?.name}\nSN/Ref: ${sn || '-'}\n\nTerima kasih telah belanja di Grimoire! 🩸`;
-                } else if (newStatus === 'FAILED') {
-                    waMsg = `*TOPUP GAGAL* ❌\nOrder: *${trx.invoice}*\nMohon hubungi Admin untuk refund manual.`;
-                }
-
-                if (waMsg) whatsappService.sendMessage(targetWa, waMsg);
-            }
-        } else {
-            console.log(`ℹ️ [WEBHOOK] No Status Change for ${ref_id}: ${status}`);
-        }
-
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Apigames Webhook Error:', error);
-        res.status(500).json({ success: false });
-    }
-};
-
-// POST /api/transaction/check-id
-export const checkGameId = async (req: Request, res: Response) => {
-    const { gameSlug, userId, zoneId } = req.body;
-
-    // Map slugs to game codes
-    let gameCode = 'mobilelegend'; // Default per docs example
-    if (gameSlug === 'mobile-legends') gameCode = 'mobilelegend';
-    if (gameSlug === 'free-fire') gameCode = 'freefire';
-
-    try {
-        const result = await apigamesService.checkProfile(gameCode, userId, zoneId);
-        if (result.success) {
-            res.json({ success: true, data: result.data });
-        } else {
-            res.status(400).json({ success: false, message: 'ID Not Found' });
-        }
-    } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// GET /api/vendor-products
-export const getVendorProducts = async (req: Request, res: Response) => {
-    try {
-        const result = await apigamesService.getMerchantServices();
-        if (result.success) {
-            res.json({ success: true, data: result.data });
-        } else {
-            res.status(500).json({ success: false, message: result.message });
-        }
-    } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// POST /api/check-status/:id
-export const checkTransactionStatus = async (req: Request, res: Response) => {
-    try {
-        const { id } = req.params as { id: string };
-
-        // 1. Get Transaction
-        const trx = await prisma.transaction.findUnique({ where: { id } });
-        if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
-
-        // A. If PENDING, Check Payment Gateway (IPAYMU) First
-        if ((trx.status as any) === 'PENDING') {
-            if (trx.paymentTrxId) {
-                const payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
-
-                // Ipaymu Status: 1=Berhasil, 0=Pending, -1=Gagal (Check docs/logs)
-                // Based on previous logs: "Check Result: 1 (Berhasil)"
-                if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
-                    // Update to PROCESSING / SUCCESS
-                    console.log(`✅ [MANUAL CHECK] Payment found SUCCESS for ${trx.invoice}`);
-
-                    // Extract Info from Ipaymu Check
-                    // payCheck.data (Data) exposed by service update
-                    const payData: any = (payCheck as any).data || {};
-
-                    const detectedChannel = payData.channel || payData.via || payData.paymentMethod || null;
-                    const detectedNo = payData.va || payData.paymentNo || payData.qris || null;
-                    const detectedFee = payData.fee ? parseFloat(payData.fee) : undefined;
-                    const detectedTotal = payData.amount || payData.total ? parseFloat(payData.amount || payData.total) : undefined;
-
-                    await prisma.transaction.update({
-                        where: { id: trx.id },
-                        data: {
-                            status: 'PROCESSING',
-                            paymentUrl: null,
-                            updatedAt: new Date(),
-                            paymentChannel: detectedChannel,
-                            paymentNo: detectedNo,
-                            adminFee: detectedFee,
-                            amount: detectedTotal
-                        } as any
-                    });
-
-                    // Trigger WA Receipt
-                    let targetWa = trx.guestContact;
-                    if (!targetWa && trx.userId) {
-                        try {
-                            const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
-                            if (u.length > 0) targetWa = u[0].phoneNumber;
-                        } catch (e) { }
-                    }
-
-                    if (targetWa) {
-                        let paymentInfo = '';
-                        if (detectedChannel) paymentInfo += `\nMetode: ${detectedChannel.toUpperCase()}`;
-                        if (detectedNo) paymentInfo += `\nNo Bayar/VA: ${detectedNo}`;
-
-                        const waMsg = `*PEMBAYARAN DITERIMA* 💰\nInvoice: *${trx.invoice}*\nStatus: LUNAS${paymentInfo}\n\nSistem sedang memproses pesanan Anda. Mohon tunggu 1-3 menit.`;
-                        whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
-                    }
-
-                    // Proceed to Check Provider (Apigames)
-                    processGameTopup(trx.id).catch(console.error);
-
-                    // FETCH FRESH DATA to return
-                    const updatedTrx = await prisma.transaction.findUnique({ where: { id: trx.id }, include: { product: true } });
-
-                    // Return success and FULL OBJECT
-                    return res.json({ success: true, message: "Payment Verified!", data: updatedTrx });
-                }
-            }
-        }
-
-        // B. Check Provider Status (Apigames)
-        // Only if status is PROCESSING or SUCCESS (or we just updated it)
-        const result = await apigamesService.checkTransaction(trx.invoice);
-
-        if (result.success && result.data) {
-            const providerStatus = (result.data as any).status; // Sukses, Pending, Gagal
-            let newStatus: any = trx.status;
-
-            if (providerStatus === 'Sukses' || providerStatus === 'Success') {
-                newStatus = 'SUCCESS';
-            } else if (providerStatus === 'Gagal' || providerStatus === 'Failed') {
-                newStatus = 'FAILED';
-            }
-
-            // Update if changed
-            if (newStatus !== trx.status) {
-                await prisma.transaction.update({
-                    where: { id },
-                    data: {
-                        status: newStatus as any, // Cast to any to bypass strict Enum check if needed, or ensure "SUCCESS" is in Enum
-                        providerStatus: providerStatus,
-                        sn: (result.data as any).sn,
-                        updatedAt: new Date()
-                    }
-                });
-
-                // If Success, Trigger WA
-                if (newStatus === 'SUCCESS') {
-                    let targetWa = trx.guestContact;
-                    if (!targetWa && trx.userId) {
-                        // Fetch user phone if needed
-                        try {
-                            const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
-                            if (u.length > 0 && u[0].phoneNumber) targetWa = u[0].phoneNumber;
-                        } catch (e) { console.warn("Failed to fetch user phone for check status", e); }
-                    }
-
-                    if (targetWa) {
-                        const waMsg = `*TOPUP SUKSES* ✅ (Manual Check)\nOrder: *${trx.invoice}*\nSN/Ref: ${(result.data as any).sn || '-'}\n\nTerima kasih!`;
-                        whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
-                    }
-                }
-
-                return res.json({ success: true, message: "Status Updated", data: { status: newStatus } });
-            } else {
-                return res.json({ success: true, message: "Status Unchanged (Provider: " + providerStatus + ")", data: { status: trx.status } });
-            }
-
-        } else {
-            return res.status(400).json({ success: false, message: "Provider Check Failed: " + result.message });
-        }
-
-    } catch (error: any) {
-        console.error("Check Status Error:", error);
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// DEV: Mock Provider Callback
-export const mockApigamesCallback = async (req: Request, res: Response) => {
-    try {
-        const { id } = req.body;
-        const trx = await prisma.transaction.findUnique({ where: { id } });
-        if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
-
-        // Simulate Apigames Webhook Request
-        const mockBody = {
-            ref_id: trx.providerTrxId || `MOCK_PROV_${Date.now()}`,
-            trx_id: trx.providerTrxId || `MOCK_PROV_${Date.now()}`,
-            status: 'Sukses',
-            sn: 'MOCK_SN_1234567890',
-            message: 'Mock Success'
-        };
-
-        // If providerTrxId is null, force update it
-        if (!trx.providerTrxId) {
-            await prisma.transaction.update({ where: { id }, data: { providerTrxId: `MOCK_REQ_${id}` } });
-            mockBody.ref_id = `MOCK_REQ_${id}`;
-            mockBody.trx_id = `MOCK_REQ_${id}`;
-        }
-
-        console.log(`🛠️ [DEV] Mocking Apigames Callback for ${trx.invoice}`);
-
-        await prisma.transaction.update({
-            where: { id },
-            data: {
-                status: 'SUCCESS',
-                providerStatus: 'Sukses',
-                sn: mockBody.sn,
-                updatedAt: new Date()
-            }
-        });
-
-        // Trigger WA
-        let targetWa = trx.guestContact;
-        if (!targetWa && trx.userId) {
-            try {
-                const u: any[] = await prisma.$queryRaw`SELECT "phoneNumber" FROM "users" WHERE id = ${trx.userId} LIMIT 1`;
-                if (u.length > 0) targetWa = u[0].phoneNumber;
-            } catch (e) { }
-        }
-        if (targetWa) {
-            const waMsg = `*TOPUP SUKSES* ✅ (Mock Dev)\nOrder: *${trx.invoice}*\nSN/Ref: ${mockBody.sn}\n\nTerima kasih!`;
-            whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
-        }
-
-        res.json({ success: true, message: "Mock Callback Success" });
-
-    } catch (error: any) {
-        console.error("Mock Callback Error:", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };

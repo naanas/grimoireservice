@@ -13,5 +13,6 @@ router.get('/transactions', adminController.getAllTransactions);
 
 router.get('/products', adminController.getAllProducts);
 router.patch('/products/:id/price', adminController.updateProductPrice);
+router.post('/products/sync', adminController.syncProducts);
 
 export default router;
