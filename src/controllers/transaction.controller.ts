@@ -1,10 +1,8 @@
 import type { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import * as apigamesService from '../services/apigames.service.js';
 import * as ipaymuService from '../services/ipaymu.service.js';
 import * as whatsappService from '../services/whatsapp.service.js';
-
-const prisma = new PrismaClient();
 
 // HELPER: Process Game Topup (Trigger Provider)
 const processGameTopup = async (trxId: string) => {

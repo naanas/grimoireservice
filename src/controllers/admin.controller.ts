@@ -1,7 +1,5 @@
 import type { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../lib/prisma.js';
 
 // GET /api/admin/stats
 export const getDashboardStats = async (req: Request, res: Response) => {
@@ -97,7 +95,7 @@ export const getAllTransactions = async (req: Request, res: Response) => {
 // PATCH /api/admin/products/:id/price
 export const updateProductPrice = async (req: Request, res: Response) => {
     try {
-        const { id } = req.params;
+        const id = String(req.params.id);
         const { price_sell, isActive } = req.body;
 
         const updateData: any = {};

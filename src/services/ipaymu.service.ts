@@ -16,19 +16,33 @@ export const initPayment = async (trxId: string, amount: number, buyerName: stri
     const keyEnd = IPAYMU_API_KEY.substring(IPAYMU_API_KEY.length - 5);
     console.log(`[IPAYMU] Config: VA='${IPAYMU_VA}' | Key='${keyStart}***${keyEnd}'`);
 
-    // Adjust payment method code
+    // Map Payment Method to Ipaymu valid values
     let method = 'qris';
-    if (paymentMethod.toLowerCase().includes('va')) method = 'va';
-    if (paymentMethod.toLowerCase().includes('alfamart') || paymentMethod.toLowerCase().includes('indomaret')) method = 'cstore';
+    let channel = null;
 
-    // 1. Prepare Body
+    const pmLower = paymentMethod.toLowerCase();
+
+    if (pmLower === 'qris') {
+        method = 'qris';
+        channel = 'qris'; // Channel for QRIS is usually 'qris' or 'mpm'
+    } else if (pmLower === 'va') {
+        method = 'va';
+        channel = null; // Generic VA, let user choose on Ipaymu page (if supported) or default? 
+        // Note: If Ipaymu Direct API requires channel, this might fail without a channel. 
+        // But for "Redirect" payment (which returnUrl implies), sending just method 'va' usually opens the list.
+    } else if (pmLower.startsWith('va_')) {
+        // Handle specific like VA_BCA -> method='va', channel='bca'
+        method = 'va';
+        channel = pmLower.replace('va_', '');
+    }
+
     const returnUrl = process.env.NEXT_PUBLIC_FRONTEND_URL || 'http://localhost:3000';
     const backendUrl = process.env.BACKEND_URL || 'http://localhost:4000'; // Should be ngrok/public URL for callbacks
 
     // Use specific return path (e.g. /order/mobile-legends) or default to history
     const finalReturnUrl = returnPath ? `${returnUrl}${returnPath}?id=${trxId}` : `${returnUrl}/history?id=${trxId}`;
 
-    const bodyObj = {
+    const bodyObj: any = {
         "product": ["Topup Game"],
         "qty": ["1"],
         "price": [amount.toFixed(0)],
@@ -36,12 +50,15 @@ export const initPayment = async (trxId: string, amount: number, buyerName: stri
         "cancelUrl": `${returnUrl}/order`,
         "notifyUrl": `${backendUrl}/api/callback/ipaymu`,
         "referenceId": trxId,
-        "buyerName": "Guest",
-        "buyerEmail": "guest@gmail.com",
+        "buyerName": buyerName || "Guest",
+        "buyerEmail": buyerEmail || "guest@gmail.com",
         "buyerPhone": "08123456789",
-        "paymentMethod": method,
-        "paymentChannel": paymentMethod.toLowerCase().replace('va_', '').replace('qris', 'qris')
+        "paymentMethod": method
     };
+
+    if (channel) {
+        bodyObj.paymentChannel = channel;
+    }
 
     if (bodyObj.notifyUrl.includes('localhost')) {
         console.warn('⚠️  [IPAYMU] WARNING: notifyUrl is set to LOCALHOST. Callbacks will FAIL unless you use ngrok/tunnel.');

@@ -1,7 +1,6 @@
 import type { Request, Response } from 'express';
-import { PrismaClient, VoucherType } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { VoucherType } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 
 export const checkVoucher = async (req: Request, res: Response) => {
     try {
