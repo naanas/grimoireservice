@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Config
-const IPAYMU_BASE_URL = 'https://sandbox.ipaymu.com/api/v2';
+const IPAYMU_BASE_URL = process.env.IPAYMU_API_URL || '';
 const IPAYMU_API_KEY = (process.env.IPAYMU_API_KEY || '').trim();
 const IPAYMU_VA = (process.env.IPAYMU_VA || '').trim();
 
@@ -142,8 +142,9 @@ export const checkTransaction = async (trxId: string) => {
             console.log(`[IPAYMU] Check Result: ${resData.Data.Status} (${resData.Data.StatusDesc})`);
             return {
                 success: true,
-                status: resData.Data.Status, // 1 = Pending, 6 = Success ? (Need to verify Ipaymu docs, usually 'berhasil' in callback map to 1/6)
-                statusDesc: resData.Data.StatusDesc
+                status: resData.Data.Status, // 1 = Pending, 6 = Success
+                statusDesc: resData.Data.StatusDesc,
+                data: resData.Data // Expose full data (Channel, Via, PaymentNo, etc.)
             };
         }
         return { success: false, message: 'Transaction Not Found in Ipaymu' };
