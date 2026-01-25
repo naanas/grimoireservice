@@ -156,7 +156,51 @@ export const createTransaction = async (req: Request, res: Response) => {
 
         // 3. Prepare Transaction Data
         const invoice = `GRM-${Date.now()}`;
-        const amount = product.price_sell;
+        let amount = product.price_sell;
+        let discountAmount = 0;
+        const validVoucherCode = req.body.voucherCode;
+
+        // --- VOUCHER LOGIC START ---
+        if (validVoucherCode) {
+            const voucher = await prisma.voucher.findUnique({
+                where: { code: validVoucherCode }
+            });
+
+            if (voucher) {
+                // Validate again (Security)
+                const now = new Date();
+                if (voucher.isActive && voucher.stock > 0 && voucher.expiresAt > now && amount >= voucher.minPurchase) {
+
+                    // Calculate Discount
+                    if (voucher.type === 'FIXED') {
+                        discountAmount = voucher.amount;
+                    } else if (voucher.type === 'PERCENTAGE') {
+                        discountAmount = (amount * voucher.amount) / 100;
+                        if (voucher.maxDiscount && discountAmount > voucher.maxDiscount) {
+                            discountAmount = voucher.maxDiscount;
+                        }
+                    }
+
+                    // Apply
+                    if (discountAmount > amount) discountAmount = amount; // Prevent negative
+                    amount -= discountAmount;
+
+                    // Decrement Stock (Atomic update not strictly needed for MVP but good practice)
+                    await prisma.voucher.update({
+                        where: { id: voucher.id },
+                        data: { stock: { decrement: 1 } }
+                    });
+
+                    console.log(`🎟️ [VOUCHER] Applied ${validVoucherCode}: -${discountAmount} | Final: ${amount}`);
+                } else {
+                    console.warn(`⚠️ [VOUCHER] Invalid or Expired: ${validVoucherCode}`);
+                    // We can either fail or just ignore. Ignoring is safer for UX unless we want to be strict.
+                    // Let's just ignore and proceed with normal price to avoid blocking order?
+                    // Update: User expects discount. If invalid, maybe it's better to NOT fail but warn?
+                }
+            }
+        }
+        // --- VOUCHER LOGIC END ---
 
         // 4. Handle Payment
         if (paymentMethod === 'BALANCE') {
@@ -210,6 +254,8 @@ export const createTransaction = async (req: Request, res: Response) => {
                         targetId: userId,
                         zoneId,
                         amount,
+                        discountAmount,
+                        voucherCode: validVoucherCode,
                         status: 'SUCCESS',
                         paymentMethod: 'BALANCE',
                         userId: user.id,
@@ -266,6 +312,8 @@ export const createTransaction = async (req: Request, res: Response) => {
                         targetId: userId,
                         zoneId,
                         amount,
+                        discountAmount,
+                        voucherCode: validVoucherCode,
                         status: 'PENDING',
                         paymentMethod,
                         userId: authUserId || undefined,
