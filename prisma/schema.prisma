@@ -47,7 +47,7 @@ model Category {
   // Game Feature Config
   requiresZoneId    Boolean   @default(false)
   requiresServerId  Boolean   @default(false)
-  code              String?   @unique // Provider Code (e.g. mobile-legends)
+  code              String?   // Provider Code (e.g. mobile-legends)
   profitMargin      Float     @default(5.0) // Percentage (5.0 = 5%)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt

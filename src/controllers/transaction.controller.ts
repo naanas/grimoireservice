@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js';
 import * as gameProvider from '../services/game.service.js'; // Consolidated on Game Service (Adapter)
 import * as ipaymuService from '../services/ipaymu.service.js';
 import * as whatsappService from '../services/whatsapp.service.js';
+import * as crypto from 'crypto'; // Added for VIP callback signature validation
 
 // --- HELPER FUNCTIONS ---
 
@@ -114,11 +115,29 @@ export const getCategories = async (req: Request, res: Response) => {
     }
 };
 
+// GET /api/categories/:slug
+export const getCategoryBySlug = async (req: Request, res: Response) => {
+    try {
+        const { slug } = req.params;
+        const category = await prisma.category.findUnique({
+            where: { slug }
+        });
+        if (!category) return res.status(404).json({ success: false, message: "Category not found" });
+        res.json({ success: true, data: category });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 // GET /api/products
 export const getProducts = async (req: Request, res: Response) => {
     try {
+        const { category } = req.query;
         const products = await prisma.product.findMany({
-            where: { isActive: true },
+            where: {
+                isActive: true,
+                ...(category ? { category: { slug: String(category) } } : {})
+            },
             include: { category: true }
         });
         res.json({ success: true, data: products });
@@ -152,10 +171,34 @@ export const getVendorProducts = async (req: Request, res: Response) => {
 
 // POST /api/transaction/check-id
 export const checkGameId = async (req: Request, res: Response) => {
-    const { gameSlug, userId, zoneId } = req.body;
+    const { gameCode, gameSlug, userId, zoneId } = req.body as { gameCode?: string, gameSlug?: string, userId: string, zoneId?: string };
+    console.log(`🔍 [CHECK-ID] Payload:`, req.body);
 
     try {
-        const result = await gameProvider.checkProfile(gameSlug, userId, zoneId);
+        let codeToSend = gameCode;
+
+        // If gameCode is NOT provided (legacy), look it up via gameSlug
+        if (!codeToSend && gameSlug) {
+            const category = await prisma.category.findUnique({ where: { slug: String(gameSlug) } });
+            if (!category) {
+                console.warn(`⚠️ [CHECK-ID] Category not found for slug: ${gameSlug}`);
+                return res.status(400).json({ success: false, message: 'Game Category Not Found' });
+            }
+            codeToSend = category.code || category.name;
+        }
+
+        // Optional: Verification step even if code provided? 
+        // For now, let's assume if code is sent, it's valid enough or provider will reject.
+        // But to be safe, we can check if a category with this code exists if we want strictness.
+        // Let's stick to the user's request: "frontend sends category name (code)".
+
+        if (!codeToSend) {
+            return res.status(400).json({ success: false, message: 'Game Code or Slug required' });
+        }
+
+        console.log(`✅ [CHECK-ID] Using Code: '${codeToSend}'`);
+
+        const result = await gameProvider.checkProfile(codeToSend, userId, zoneId);
         if (result.success) {
             res.json({ success: true, data: result.data });
         } else {
@@ -261,15 +304,21 @@ export const createTransaction = async (req: Request, res: Response) => {
                     amount,
                     discountAmount,
                     voucherCode: validVoucherCode,
-                    status: 'SUCCESS', // Paid immediately
+                    status: 'PROCESSING', // Paid, waiting for provider
                     paymentMethod: 'BALANCE',
                     userId: user.id,
-                    guestContact: user.phoneNumber || null // Use null for Prisma compatibility
+                    guestContact: user.phoneNumber || null
                 }
             });
             await prisma.user.update({ where: { id: payerId }, data: { balance: { decrement: amount } } });
 
             console.log(`✅ [BALANCE] Payment Success: ${invoice} | User: ${user.name}`);
+
+            // Send WA Notification (Payment Received)
+            if (user.phoneNumber) {
+                const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n💰 *PEMBAYARAN DITERIMA*\nInvoice: *${invoice}*\nStatus: LUNAS (Saldo)\nTotal Paid: Rp${amount.toLocaleString('id-ID')}\n\n⏳ *Sedang Memproses...*\nOrder Anda sedang dikerjakan oleh sistem. Mohon tunggu 1-3 menit.\n---------------------------`;
+                whatsappService.sendMessage(user.phoneNumber, waMsg).catch(console.error);
+            }
 
             // FIRE AND FORGET: PROCESS GAME TOPUP
             processGameTopup(trx.id).catch(err => console.error("Auto Process Error:", err));
@@ -278,7 +327,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                 success: true,
                 data: {
                     invoice,
-                    status: 'SUCCESS',
+                    status: 'PROCESSING',
                     productName: product.name,
                     amount
                 }
@@ -355,7 +404,7 @@ export const createTransaction = async (req: Request, res: Response) => {
             // Send WA Invoice
             if (targetPhone) {
                 console.log(`🚀 [WA] Sending Invoice to ${targetPhone}`);
-                const waMsg = `*TAGIHAN BARU* 🧾\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\nBayar di sini: ${payment.data?.Url}\n\nTerima kasih!`;
+                const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n📋 *TAGIHAN BARU*\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\n🔗 *Link Pembayaran:*\n${payment.data?.Url}\n---------------------------\nSistem otomatis membatalkan jika tidak dibayar dalam 24 jam.`;
                 whatsappService.sendMessage(targetPhone, waMsg).catch(err => console.error("WA Error:", err));
             }
 
@@ -482,10 +531,15 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
             const paymentChannel = req.body.channel || req.body.via || null;
             const paymentNo = req.body.va || req.body.qris || null;
 
+            // Standard Practice: 
+            // - Topup: Payment Paid -> 'PROCESSING' (waiting for provider)
+            // - Deposit: Payment Paid -> 'SUCCESS' (balance added instantly)
+            const newStatus = (trx.type === 'DEPOSIT') ? 'SUCCESS' : 'PROCESSING';
+
             await prisma.transaction.update({
                 where: { id: trxId },
                 data: {
-                    status: 'SUCCESS',
+                    status: newStatus,
                     adminFee: fee,
                     amount: totalPaid,
                     updatedAt: new Date(),
@@ -519,7 +573,7 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
                 let paymentInfo = '';
                 if (paymentChannel) paymentInfo += `\nMetode: ${paymentChannel.toUpperCase()}`;
 
-                const waMsg = `*PEMBAYARAN DITERIMA* 💰\nInvoice: *${trx.invoice}*\nStatus: LUNAS${paymentInfo}\nTotal Paid: Rp${totalPaid.toLocaleString('id-ID')}\n\nSistem sedang memproses pesanan Anda. Mohon tunggu 1-3 menit.`;
+                const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n💰 *PEMBAYARAN DITERIMA*\nInvoice: *${trx.invoice}*\nStatus: LUNAS${paymentInfo}\nTotal Paid: Rp${totalPaid.toLocaleString('id-ID')}\n\n⏳ *Sedang Memproses...*\nOrder Anda sedang dikerjakan oleh sistem. Mohon tunggu 1-3 menit.\n---------------------------`;
                 whatsappService.sendMessage(targetWa, waMsg).catch(err => console.error("WA Error:", err));
             }
 
@@ -530,8 +584,9 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
             }
 
         } else if (status === 'gagal') {
-            await prisma.transaction.update({ where: { id: trxId }, data: { status: 'FAILED' } });
-            console.log(`❌ Transaction ${trxId} FAILED`);
+            // User Request: If payment fails, set to PENDING (Payment Pending) instead of FAILED
+            await prisma.transaction.update({ where: { id: trxId }, data: { status: 'PENDING' } });
+            console.log(`❌ Transaction ${trxId} Payment Failed -> Reverted to PENDING`);
         }
 
         res.json({ success: true });
@@ -546,6 +601,9 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
 export const checkTransactionStatus = async (req: Request, res: Response) => {
     try {
         const { id } = req.params as { id: string };
+        if (!id || id === 'null' || id === 'undefined') {
+            return res.status(400).json({ success: false, message: "Invalid Transaction ID" });
+        }
 
         // 1. Get Transaction
         const trx = await prisma.transaction.findUnique({ where: { id }, include: { product: true } });
@@ -583,14 +641,15 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
 
         // B. Check Provider Status (VIP)
         // Only if status is PROCESSING or SUCCESS
-        if (trx.status === 'PROCESSING' || trx.status === 'SUCCESS') {
-            // Need Provider Trx ID to check VIP?
-            // VIP Service checkTransaction takes 'trxId'.
-            // If we don't have providerTrxId, maybe we can't check? Or we never placed it?
-            // If PROCESSING and no providerTrxId, try to place it again? -> Safety measure
+        // B. Check Provider Status (VIP)
+        console.log(`🔍 [CHECK-STATUS] ID: ${id} | Status: ${trx.status} | ProviderID: ${trx.providerTrxId}`);
 
+        if (trx.status === 'PROCESSING' || trx.status === 'SUCCESS') {
             if (!trx.providerTrxId) {
-                // Try processing again if it's stuck in processing but no ID
+                // ... existing retry logic ...
+                // skipping for brevity in replacement, assuming it's unchanged unless I need to include it.
+                // Wait, I need to include the whole block to replace correctly.
+                // Retaining Retry Logic:
                 console.log(`⚠️ [MANUAL CHECK] Processing Status but no Provider ID. Retrying Process...`);
                 const proc = await processGameTopup(trx.id);
                 if (proc?.success) {
@@ -599,18 +658,25 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                 return res.json({ success: false, message: "Provider Retry Failed" });
             }
 
-            const result = await gameProvider.checkTransaction(trx.invoice, trx.providerTrxId || undefined);
+            console.log(`🔍 [CHECK-STATUS] Calling VIP CheckTransaction...`);
+            // Adapter expects (refId, providerId). VIP needs providerId (2nd arg).
+            const result = await gameProvider.checkTransaction(trx.invoice, trx.providerTrxId);
+            console.log(`🔍 [CHECK-STATUS] VIP Result:`, JSON.stringify(result));
 
             if (result.success && result.data) {
-                const providerStatus = (result.data as any).status; // VIP: success, error, waiting
+                const providerStatus = (result.data as any).status;
+                console.log(`🔍 [CHECK-STATUS] Provider Says: ${providerStatus}`);
+
                 let newStatus: any = trx.status;
 
+                // Sync Status Logic with Callback
                 if (providerStatus === 'success') {
                     newStatus = 'SUCCESS';
                 } else if (providerStatus === 'error') {
-                    // Only fail if we are sure
                     newStatus = 'FAILED';
                 }
+
+                console.log(`🔍 [CHECK-STATUS] Decision: ${trx.status} -> ${newStatus}`);
 
                 if (newStatus !== trx.status) {
                     await prisma.transaction.update({
@@ -623,18 +689,34 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                         }
                     });
 
+                    // Send WA if Success
                     if (newStatus === 'SUCCESS') {
-                        // Optional: Send Success WA if strictly needed
+                        console.log(`📨 [WA] Sending Success Notification via Manual Sync...`);
+                        // Re-fetch to get contacts if needed, or use existing 'trx' object (trx.guestContact/userId)
+                        // But 'trx' object might be stale? No, 'trx' has guestContact.
+                        let targetWa = trx.guestContact;
+                        if (!targetWa && trx.userId) {
+                            const u = await prisma.user.findUnique({ where: { id: trx.userId } });
+                            if (u) targetWa = u.phoneNumber;
+                        }
+
+                        if (targetWa) {
+                            const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n✅ *TOPUP SUKSES*\nInvoice: *${trx.invoice}*\nGame: ${trx.product?.name}\nUser ID: ${trx.targetId}\n\n🔑 *SN / KODE:*\n${(result.data as any).sn}\n---------------------------\nTerima kasih sudah berbelanja di Grimoire Coins!`;
+                            whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
+                        }
                     }
 
                     return res.json({ success: true, message: "Status Updated", data: { status: newStatus } });
                 } else {
                     return res.json({ success: true, message: `Status Unchanged (${providerStatus})`, data: { status: trx.status } });
                 }
+            } else {
+                console.error(`❌ [CHECK-STATUS] VIP Check Failed: ${result.message}`);
+                return res.json({ success: false, message: `Provider Check Failed: ${result.message}` });
             }
         }
 
-        return res.json({ success: true, message: "No Updates Available", data: { status: trx.status } });
+        return res.json({ success: true, message: "No Updates Available (Not Processing)", data: { status: trx.status } });
 
     } catch (error: any) {
         console.error("Check Status Error:", error);
@@ -677,5 +759,114 @@ export const getTransaction = async (req: Request, res: Response) => {
         res.json({ success: true, data: transaction });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const VIP_WHITELIST_IP = '178.248.73.218';
+
+// POST /api/transaction/callback/vip
+export const handleVipCallback = async (req: Request, res: Response) => {
+    // 1. IP Whitelist Check
+    const remoteIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '';
+    if (process.env.NODE_ENV === 'production' && !remoteIp.includes(VIP_WHITELIST_IP)) {
+        console.warn(`[VIP CALLBACK] Unauthorized IP: ${remoteIp}`);
+        // return res.status(403).json({ result: false, message: 'Unauthorized IP' }); 
+    }
+
+    // 2. Signature Check
+    const signature = req.headers['x-client-signature'] as string;
+    const apiId = process.env.VIP_APIID || '';
+    const apiKey = process.env.VIP_APIKEY || '';
+    const mySignature = crypto.createHash('md5').update(apiId + apiKey).digest('hex');
+
+    if (signature !== mySignature) {
+        console.error(`[VIP CALLBACK] Invalid Signature. Got: ${signature}, Expected: ${mySignature}`);
+        return res.status(403).json({ result: false, message: 'Invalid Signature' });
+    }
+
+    console.log('[VIP CALLBACK] Received:', JSON.stringify(req.body));
+
+    // Payload: { data: { trxid: '...', status: 'success', ... } }
+    const { data } = req.body;
+    if (!data || !data.trxid) {
+        return res.status(400).json({ result: false, message: 'Invalid Payload' });
+    }
+
+    const { trxid, status, note } = data;
+
+    try {
+        // Find Transaction by Provider ID
+        const transaction = await prisma.transaction.findFirst({
+            where: { providerTrxId: trxid }
+        });
+
+        if (!transaction) {
+            console.error(`[VIP CALLBACK] Transaction Not Found for Provider ID: ${trxid}`);
+            return res.status(404).json({ result: false, message: 'Transaction Not Found' });
+        }
+
+        console.log(`[VIP CALLBACK] Updating Trx ${transaction.invoice} | Old Status: ${transaction.status} -> New: ${status}`);
+
+        let newStatus: any = transaction.status;
+        let sn = transaction.sn || '';
+
+        // Map Status
+        // Map Status
+        // User Logic: 
+        // - "success" -> Topup Sukses (SUCCESS)
+        // - "ga gagal" (error) -> Topup Gagal (FAILED)
+        if (status === 'success') {
+            newStatus = 'SUCCESS';
+            sn = note || sn;
+        } else {
+            // Treat 'error' as FAILED.
+            // If 'waiting' or 'processing', arguably keep as PROCESSING or PENDING.
+            if (status === 'error') {
+                newStatus = 'FAILED';
+                sn = note || sn;
+            } else if (status === 'waiting' || status === 'processing') {
+                newStatus = 'PROCESSING';
+            } else {
+                newStatus = 'FAILED'; // Fallback for unknown failures
+            }
+        }
+
+        if (newStatus !== transaction.status) {
+            await prisma.transaction.update({
+                where: { id: transaction.id },
+                data: {
+                    status: newStatus,
+                    providerStatus: status,
+                    sn: sn,
+                    updatedAt: new Date()
+                }
+            });
+
+            // Send WA Notification
+            if (newStatus === 'SUCCESS') {
+                console.log(`📨 [WA] Sending Success Notification via Callback...`);
+                let targetWa = transaction.guestContact;
+                if (!targetWa && transaction.userId) {
+                    const u = await prisma.user.findUnique({ where: { id: transaction.userId } });
+                    if (u) targetWa = u.phoneNumber;
+                }
+
+                if (targetWa) {
+                    // Need product name? transaction object from findFirst doesn't include product relation.
+                    // We can just omit product name or fetch it. Quick fetch:
+                    const fullTrx = await prisma.transaction.findUnique({ where: { id: transaction.id }, include: { product: true } });
+                    const prodName = fullTrx?.product?.name || 'Item';
+
+                    const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n✅ *TOPUP SUKSES*\nInvoice: *${transaction.invoice}*\nGame: ${prodName}\nUser ID: ${transaction.targetId}\n\n🔑 *SN / KODE:*\n${sn}\n---------------------------\nTerima kasih sudah berbelanja di Grimoire Coins!`;
+                    whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
+                }
+            }
+        }
+
+        return res.json({ result: true, message: 'Callback Processed' });
+
+    } catch (error: any) {
+        console.error('[VIP CALLBACK] Error:', error);
+        return res.status(500).json({ result: false, message: 'Internal Error' });
     }
 };

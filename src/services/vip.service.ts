@@ -14,19 +14,18 @@ const createSignature = () => {
     return crypto.createHash('md5').update(VIP_APIID + VIP_APIKEY).digest('hex');
 };
 
-// 1. Check Profile (Get Nickname)
+// 1. Check Profile (Game ID)
 export const checkProfile = async (gameCode: string, userId: string, zoneId?: string) => {
-    console.log(`[VIP] Check Profile: ${gameCode} ${userId} ${zoneId}`);
-    console.log(`[VIP] URL: ${VIP_URL}`);
+    console.log(`[VIP] Check ID: ${gameCode} | ${userId} | ${zoneId || '-'}`);
 
     try {
         const payload = new URLSearchParams();
         payload.append('key', VIP_APIKEY);
         payload.append('sign', createSignature());
         payload.append('type', 'get-nickname');
-        payload.append('code', gameCode); // Need to verify mapping!
+        payload.append('code', gameCode);
         payload.append('target', userId);
-        payload.append('additional_target', zoneId || '');
+        if (zoneId) payload.append('additional_target', zoneId);
 
         const response = await axios.post(VIP_URL, payload);
         const resData = response.data;

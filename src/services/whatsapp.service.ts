@@ -39,7 +39,7 @@ export const sendMessage = async (target: string, message: string) => {
             }
         );
 
-        console.log(`✅ [WA] Sent! Status: ${response.data?.status}`);
+        console.log(`✅ [WA] Sent! Response:`, JSON.stringify(response.data));
         return { success: true, data: response.data };
 
     } catch (error: any) {

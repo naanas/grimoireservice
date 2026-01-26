@@ -174,81 +174,84 @@ export const syncProducts = async (req: Request, res: Response) => {
     console.log('🔄 [SYNC] Starting Product Sync (VIP/Game Provider)...');
 
     try {
-        // 1. Get all Active Categories that have a 'code' (Provider Code)
-        // These codes correspond to what the Provider expects in 'filter_game'.
+        // 1. Fetch ALL Services from Provider (One Request)
+        const result = await gameProvider.getMerchantServices();
+
+        if (!result.success || !Array.isArray(result.data)) {
+            throw new Error(result.message || "Failed to fetch services from provider");
+        }
+
+        const providerServices = result.data;
+        console.log(`📦 [SYNC] Received ${providerServices.length} services from Provider.`);
+
+        // 2. Get All Active Categories
         const categories = await prisma.category.findMany({
-            where: { isActive: true, code: { not: null } }
+            where: { isActive: true }
         });
 
-        console.log(`📦 [SYNC] Found ${categories.length} categories to check.`);
-        const syncResults: any[] = [];
+        // Map Category Code/Name to ID for quick lookup
+        // We match Provider 'game' field to Category 'code' OR 'name'
+        const catMap = new Map();
+        categories.forEach(c => {
+            if (c.code) catMap.set(c.code.toLowerCase(), c);
+            catMap.set(c.name.toLowerCase(), c); // Fallback match by Name
+        });
+
         let totalUpdated = 0;
         let totalCreated = 0;
+        let skipped = 0;
 
-        for (const cat of categories) {
-            if (!cat.code) continue;
+        // 3. Process Each Service
+        for (const item of providerServices) {
+            // item: { code, name, category (game), price, status }
 
-            // 2. Fetch from Provider
-            // VIP needs 'filter_game' -> game.service.ts -> getMerchantServices(filterGame)
-            const result = await gameProvider.getMerchantServices(cat.code);
+            // Find Matching Category
+            const catKey = (item.category || '').toLowerCase();
+            const category = catMap.get(catKey);
 
-            if (result.success && Array.isArray(result.data) && result.data.length > 0) {
-                let catCount = 0;
-                for (const item of result.data) {
-                    // Item: { code, name, price, status: boolean }
-                    // Logic: Selling Price = Provider Price + (Provider Price * ProfitMargin%)
-                    const providerPrice = Number(item.price);
-                    const margin = cat.profitMargin || 5.0; // Default 5.0%
+            if (!category) {
+                // console.warn(`⚠️ Skipping service '${item.name}' - Category '${item.category}' not found in DB.`);
+                skipped++;
+                continue;
+            }
 
-                    // Calculation: 10000 + (10000 * 5/100) = 10500
-                    const rawSellingPrice = providerPrice + (providerPrice * (margin / 100));
-                    // Round up to nearest 100 or just ceil? Let's Ceil for now.
-                    const sellingPrice = Math.ceil(rawSellingPrice);
+            // Logic: Selling Price
+            const providerPrice = Number(item.price);
+            const margin = category.profitMargin || 5.0;
+            const rawSellingPrice = providerPrice + (providerPrice * (margin / 100));
+            const sellingPrice = Math.ceil(rawSellingPrice);
 
-                    // Upsert Product
-                    const existing = await prisma.product.findUnique({ where: { sku_code: item.code } });
+            // Upsert
+            const existing = await prisma.product.findUnique({ where: { sku_code: item.code } });
 
-                    if (existing) {
-                        // Update
-                        // Update Price Provider always.
-                        // Update Price Sell ONLY if Auto-Sync is desirable or logic dictates.
-                        // For now we AUTO UPDATE Selling Price based on margin to ensure profit is maintained if capital rises.
-                        await prisma.product.update({
-                            where: { id: existing.id },
-                            data: {
-                                name: item.name,
-                                price_provider: providerPrice,
-                                price_sell: sellingPrice,
-                                isActive: item.status,
-                                updatedAt: new Date()
-                            }
-                        });
-                        totalUpdated++;
-                    } else {
-                        // Create
-                        await prisma.product.create({
-                            data: {
-                                sku_code: item.code,
-                                name: item.name,
-                                price_provider: providerPrice,
-                                price_sell: sellingPrice,
-                                categoryId: cat.id,
-                                isActive: item.status
-                            }
-                        });
-                        totalCreated++;
-                        catCount++;
+            if (existing) {
+                await prisma.product.update({
+                    where: { id: existing.id },
+                    data: {
+                        name: item.name,
+                        price_provider: providerPrice,
+                        price_sell: sellingPrice,
+                        isActive: item.status,
+                        updatedAt: new Date()
                     }
-                }
-                syncResults.push({ category: cat.name, found: result.data.length, new: catCount });
+                });
+                totalUpdated++;
             } else {
-                // If data empty, maybe 'Product not found' or 'No service'
-                // console.warn(`⚠️ No products for ${cat.name} (${cat.code})`);
-                // syncResults.push({ category: cat.name, status: 'Empty/Error', msg: result.message });
+                await prisma.product.create({
+                    data: {
+                        sku_code: item.code,
+                        name: item.name,
+                        price_provider: providerPrice,
+                        price_sell: sellingPrice,
+                        categoryId: category.id,
+                        isActive: item.status
+                    }
+                });
+                totalCreated++;
             }
         }
 
-        console.log(`✅ [SYNC] Completed. Updated: ${totalUpdated}, Created: ${totalCreated}`);
+        console.log(`✅ [SYNC] Completed. Updated: ${totalUpdated}, Created: ${totalCreated}, Skipped: ${skipped}`);
 
         res.json({
             success: true,
@@ -256,7 +259,8 @@ export const syncProducts = async (req: Request, res: Response) => {
             data: {
                 updated: totalUpdated,
                 created: totalCreated,
-                details: syncResults
+                skipped,
+                total: providerServices.length
             }
         });
 
