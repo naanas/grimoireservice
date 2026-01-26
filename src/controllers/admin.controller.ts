@@ -168,112 +168,100 @@ export const getAllProducts = async (req: Request, res: Response) => {
     }
 };
 // POST /api/admin/products/sync
-import * as gameProvider from '../services/vip.service.js';
+import * as gameProvider from '../services/game.service.js';
 
 export const syncProducts = async (req: Request, res: Response) => {
+    console.log('🔄 [SYNC] Starting Product Sync (VIP/Game Provider)...');
+
     try {
-        console.log("🔄 [SYNC] Starting Product Sync...");
-        const result = await gameProvider.getMerchantServices();
+        // 1. Get all Active Categories that have a 'code' (Provider Code)
+        // These codes correspond to what the Provider expects in 'filter_game'.
+        const categories = await prisma.category.findMany({
+            where: { isActive: true, code: { not: null } }
+        });
 
-        if (!result.success || !result.data) {
-            return res.status(500).json({ success: false, message: result.message || "Failed to fetch from provider" });
-        }
+        console.log(`📦 [SYNC] Found ${categories.length} categories to check.`);
+        const syncResults: any[] = [];
+        let totalUpdated = 0;
+        let totalCreated = 0;
 
-        const items = result.data; // [{ code, name, price, category }]
-        let updatedCount = 0;
-        let createdCount = 0;
+        for (const cat of categories) {
+            if (!cat.code) continue;
 
-        console.log(`📦 [SYNC] Found ${items.length} items from Provider. Processing...`);
+            // 2. Fetch from Provider
+            // VIP needs 'filter_game' -> game.service.ts -> getMerchantServices(filterGame)
+            const result = await gameProvider.getMerchantServices(cat.code);
 
-        // 1. Process Categories
-        // We need to ensure categories exist.
-        // Group items by category name
-        const categories = [...new Set(items.map((i: any) => i.category))];
+            if (result.success && Array.isArray(result.data) && result.data.length > 0) {
+                let catCount = 0;
+                for (const item of result.data) {
+                    // Item: { code, name, price, status: boolean }
+                    // Logic: Selling Price = Provider Price + (Provider Price * ProfitMargin%)
+                    const providerPrice = Number(item.price);
+                    const margin = cat.profitMargin || 5.0; // Default 5.0%
 
-        const categoryMap = new Map<string, string>(); // Name -> ID
+                    // Calculation: 10000 + (10000 * 5/100) = 10500
+                    const rawSellingPrice = providerPrice + (providerPrice * (margin / 100));
+                    // Round up to nearest 100 or just ceil? Let's Ceil for now.
+                    const sellingPrice = Math.ceil(rawSellingPrice);
 
-        for (const rawCatName of categories) {
-            if (!rawCatName) continue;
-            const catName = String(rawCatName);
+                    // Upsert Product
+                    const existing = await prisma.product.findUnique({ where: { sku_code: item.code } });
 
-            // Simple Slug: mobile legends -> mobile-legends
-            const slug = catName.toLowerCase().replace(/\s+/g, '-').replace(/[^\w-]/g, '');
-
-            // Upsert Category
-            const cat = await prisma.category.upsert({
-                where: { slug: slug },
-                update: {}, // Don't change name if exists, just get ID
-                create: {
-                    name: catName,
-                    slug: slug,
-                    isActive: true
+                    if (existing) {
+                        // Update
+                        // Update Price Provider always.
+                        // Update Price Sell ONLY if Auto-Sync is desirable or logic dictates.
+                        // For now we AUTO UPDATE Selling Price based on margin to ensure profit is maintained if capital rises.
+                        await prisma.product.update({
+                            where: { id: existing.id },
+                            data: {
+                                name: item.name,
+                                price_provider: providerPrice,
+                                price_sell: sellingPrice,
+                                isActive: item.status,
+                                updatedAt: new Date()
+                            }
+                        });
+                        totalUpdated++;
+                    } else {
+                        // Create
+                        await prisma.product.create({
+                            data: {
+                                sku_code: item.code,
+                                name: item.name,
+                                price_provider: providerPrice,
+                                price_sell: sellingPrice,
+                                categoryId: cat.id,
+                                isActive: item.status
+                            }
+                        });
+                        totalCreated++;
+                        catCount++;
+                    }
                 }
-            });
-            categoryMap.set(catName, cat.id);
-        }
-
-        // 2. Process Products
-        for (const item of items) {
-            const catId = categoryMap.get(item.category);
-
-            // Should we disable auto-create? 
-            // The user wants to "Sync". Usually means "Make my DB link equal to Provider".
-            // We will upsert.
-
-            // Price Logic:
-            // Provider gives "Basic Price". We need to set "Selling Price".
-            // If new product: Selling Price = Provider Price + Margin (e.g. 5% or 500)
-            // If existing: Update Provider Price ONLY? Or Update Selling Price too? 
-            // SAFETY: Update Provider Price. Keep Selling Price unless it's lower than provider price (loss prevention)?
-            // Better: Just update provider price. User manages selling price.
-
-            // Exception: New Product -> Selling Price = Provider Price + 1000 (Safe Default)
-
-            const existing = await prisma.product.findUnique({ where: { sku_code: item.code } });
-
-            if (existing) {
-                // Update
-                if (existing.price_provider !== item.price) {
-                    await prisma.product.update({
-                        where: { id: existing.id },
-                        data: {
-                            price_provider: item.price,
-                            // Optional: updates price_sell automatically? No, dangerous.
-                            // But if price_sell < item.price, maybe warn or bump?
-                            // Let's leave price_sell alone unless user asks.
-                            updatedAt: new Date()
-                        }
-                    });
-                    updatedCount++;
-                }
+                syncResults.push({ category: cat.name, found: result.data.length, new: catCount });
             } else {
-                // Create
-                if (catId) {
-                    await prisma.product.create({
-                        data: {
-                            sku_code: item.code,
-                            name: item.name,
-                            price_provider: item.price,
-                            price_sell: item.price + (item.price * 0.1), // Default 10% margin
-                            categoryId: catId,
-                            isActive: true // Auto-activate?
-                        }
-                    });
-                    createdCount++;
-                }
+                // If data empty, maybe 'Product not found' or 'No service'
+                // console.warn(`⚠️ No products for ${cat.name} (${cat.code})`);
+                // syncResults.push({ category: cat.name, status: 'Empty/Error', msg: result.message });
             }
         }
 
-        console.log(`✅ [SYNC] Completed. Updated: ${updatedCount}, Created: ${createdCount}`);
+        console.log(`✅ [SYNC] Completed. Updated: ${totalUpdated}, Created: ${totalCreated}`);
 
         res.json({
             success: true,
-            message: `Sync Complete. updated: ${updatedCount}, created: ${createdCount}`,
-            data: { updatedCount, createdCount }
+            message: "Sync Completed",
+            data: {
+                updated: totalUpdated,
+                created: totalCreated,
+                details: syncResults
+            }
         });
 
     } catch (error: any) {
-        console.error("Sync Error:", error);
+        console.error('❌ Sync Error:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };

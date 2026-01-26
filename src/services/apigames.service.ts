@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const MOCK_MODE = process.env.MOCK_MODE === 'true';
+// Mock Mode Removed
 const APIGAMES_URL = process.env.APIGAMES_URL || 'https://v1.apigames.id';
 const MERCHANT_ID = process.env.APIGAMES_MERCHANT_ID || '';
 const SECRET_KEY = process.env.APIGAMES_SECRET || '';
@@ -14,20 +14,11 @@ const createSignature = (payload: string) => {
 };
 
 export const checkProfile = async (gameCode: string, userId: string, zoneId?: string) => {
-    console.log(`[APIGAMES] Check Profile: ${gameCode} ${userId} ${zoneId} | Mock: ${MOCK_MODE}`);
+    console.log(`[APIGAMES] Check Profile: ${gameCode} ${userId} ${zoneId}`);
 
-    if (MOCK_MODE) {
-        // Simulate API Delay
-        await new Promise(r => setTimeout(r, 500));
-        return {
-            success: true,
-            data: {
-                username: `SatanicPlayer_${userId}`,
-                user_id: userId,
-                zone_id: zoneId || '666'
-            }
-        };
-    }
+    // Map Game Codes for Apigames
+    if (gameCode === 'mobile-legends') gameCode = 'mobilelegend';
+    if (gameCode === 'free-fire') gameCode = 'freefire';
 
     try {
         // Signature: md5(merchant_id + secret_key)
@@ -73,18 +64,7 @@ export const checkProfile = async (gameCode: string, userId: string, zoneId?: st
 };
 
 export const getMerchantServices = async () => {
-    console.log(`[APIGAMES] Fetching Product List... | Mock: ${MOCK_MODE}`);
-
-    if (MOCK_MODE) {
-        // Return existing mock data structure
-        return {
-            success: true,
-            data: [
-                { code: 'ML-5', name: 'Mobile Legends 5 Diamonds', price: 1500, category: 'Mobile Legends' },
-                { code: 'FF-100', name: 'Free Fire 100 Diamonds', price: 14000, category: 'Free Fire' }
-            ]
-        };
-    }
+    console.log(`[APIGAMES] Fetching Product List...`);
 
     try {
         // Signature: md5(merchant_id + secret_key)
@@ -111,22 +91,7 @@ export const getMerchantServices = async () => {
 };
 
 export const placeOrder = async (refId: string, sku: string, dest: string, zoneId?: string) => {
-    console.log(`[APIGAMES] Order: ${refId} ${sku} to ${dest} | Mock: ${MOCK_MODE}`);
-
-    if (MOCK_MODE) {
-        await new Promise(r => setTimeout(r, 1000));
-        return {
-            success: true,
-            data: {
-                ref_id: refId,
-                status: 'Sukses',
-                trx_id: `API_${Date.now()}`,
-                sn: '',
-                price: 10000,
-                message: 'Order Created'
-            }
-        };
-    }
+    console.log(`[APIGAMES] Order: ${refId} ${sku} to ${dest}`);
 
     try {
         // Signature: md5(merchant_id + secret_key + ref_id)
@@ -168,21 +133,7 @@ export const placeOrder = async (refId: string, sku: string, dest: string, zoneI
 
 
 export const checkTransaction = async (refId: string) => {
-    console.log(`[APIGAMES] Check Status: ${refId} | Mock: ${MOCK_MODE}`);
-
-    if (MOCK_MODE) {
-        // Simulate API
-        await new Promise(r => setTimeout(r, 500));
-        return {
-            success: true,
-            data: {
-                ref_id: refId,
-                status: 'Sukses',
-                sn: 'MOCK_SN_' + Date.now(),
-                message: 'Transaction Success (Mock)'
-            }
-        };
-    }
+    console.log(`[APIGAMES] Check Status: ${refId}`);
 
     try {
         const signature = createSignature(`${MERCHANT_ID}:${SECRET_KEY}:${refId}`);

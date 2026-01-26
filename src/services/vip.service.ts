@@ -5,9 +5,9 @@ dotenv.config();
 
 const VIP_APIID = process.env.VIP_APIID || '';
 const VIP_APIKEY = process.env.VIP_APIKEY || '';
-const VIP_URL = 'https://vip-reseller.co.id/api/game-feature';
+const VIP_URL = process.env.VIP_URL || '';
 // MOCK MODE support if needed, but usually we use real API with Sandbox keys if available.
-const MOCK_MODE = process.env.MOCK_MODE === 'true';
+// MOCK MODE removed.
 
 // Helper: MD5 Signature (API ID + API KEY)
 const createSignature = () => {
@@ -17,10 +17,7 @@ const createSignature = () => {
 // 1. Check Profile (Get Nickname)
 export const checkProfile = async (gameCode: string, userId: string, zoneId?: string) => {
     console.log(`[VIP] Check Profile: ${gameCode} ${userId} ${zoneId}`);
-
-    if (MOCK_MODE) {
-        return { success: true, data: { username: `MockPlayer_${userId}` } };
-    }
+    console.log(`[VIP] URL: ${VIP_URL}`);
 
     try {
         const payload = new URLSearchParams();
@@ -92,19 +89,6 @@ export const getMerchantServices = async (filterGame?: string) => {
 // 3. Place Order
 export const placeOrder = async (refId: string, sku: string, dest: string, zoneId?: string) => {
     console.log(`[VIP] Order: ${refId} ${sku} -> ${dest}`);
-
-    if (MOCK_MODE) {
-        return {
-            success: true,
-            data: {
-                trxId: `VIP_MOCK_${Date.now()}`,
-                status: 'PENDING',
-                message: 'Order Processed (Mock)',
-                sn: '',
-                price: 10000
-            }
-        };
-    }
 
     try {
         const payload = new URLSearchParams();

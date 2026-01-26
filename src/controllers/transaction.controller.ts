@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
-import * as gameProvider from '../services/vip.service.js'; // Consolidated on VIP Service
+import * as gameProvider from '../services/game.service.js'; // Consolidated on Game Service (Adapter)
 import * as ipaymuService from '../services/ipaymu.service.js';
 import * as whatsappService from '../services/whatsapp.service.js';
 
@@ -154,14 +154,8 @@ export const getVendorProducts = async (req: Request, res: Response) => {
 export const checkGameId = async (req: Request, res: Response) => {
     const { gameSlug, userId, zoneId } = req.body;
 
-    // Map slugs to simple codes if needed by VIP
-    // VIP might expect raw codes like 'mobilelegend' or 'freefire'
-    let gameCode = gameSlug;
-    if (gameSlug === 'mobile-legends') gameCode = 'mobilelegend';
-    if (gameSlug === 'free-fire') gameCode = 'freefire';
-
     try {
-        const result = await gameProvider.checkProfile(gameCode, userId, zoneId);
+        const result = await gameProvider.checkProfile(gameSlug, userId, zoneId);
         if (result.success) {
             res.json({ success: true, data: result.data });
         } else {
@@ -207,7 +201,12 @@ export const createTransaction = async (req: Request, res: Response) => {
 
         // --- VOUCHER LOGIC ---
         if (validVoucherCode) {
-            const voucher = await prisma.voucher.findUnique({ where: { code: validVoucherCode } });
+            let voucher;
+            try {
+                voucher = await prisma.voucher.findUnique({ where: { code: validVoucherCode } });
+            } catch (voucherError) {
+                console.warn("DB Voucher Check Failed:", voucherError);
+            }
             if (voucher) {
                 const now = new Date();
                 if (voucher.isActive && voucher.stock > 0 && voucher.expiresAt > now && amount >= voucher.minPurchase) {
@@ -491,8 +490,8 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
                     amount: totalPaid,
                     updatedAt: new Date(),
                     paymentTrxId: sid,
-                    paymentChannel: paymentChannel,
-                    paymentNo: paymentNo
+                    paymentChannel: paymentChannel as string,
+                    paymentNo: paymentNo as string
                 }
             });
 
@@ -600,7 +599,7 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                 return res.json({ success: false, message: "Provider Retry Failed" });
             }
 
-            const result = await gameProvider.checkTransaction(trx.providerTrxId);
+            const result = await gameProvider.checkTransaction(trx.invoice, trx.providerTrxId || undefined);
 
             if (result.success && result.data) {
                 const providerStatus = (result.data as any).status; // VIP: success, error, waiting
