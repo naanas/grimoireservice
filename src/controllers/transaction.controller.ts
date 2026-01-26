@@ -118,7 +118,7 @@ export const getCategories = async (req: Request, res: Response) => {
 // GET /api/categories/:slug
 export const getCategoryBySlug = async (req: Request, res: Response) => {
     try {
-        const { slug } = req.params;
+        const { slug } = req.params as { slug: string };
         const category = await prisma.category.findUnique({
             where: { slug }
         });
