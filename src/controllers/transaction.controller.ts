@@ -141,16 +141,9 @@ export const getProducts = async (req: Request, res: Response) => {
             include: { category: true }
         });
         res.json({ success: true, data: products });
-    } catch (error) {
-        console.warn("DB Error, falling back to Mock Data:", error);
-        // Mock Data for testing without DB
-        const mockProducts = [
-            { id: '1', sku_code: 'ML-5', name: '5 Diamonds', price_sell: 1500, category: { slug: 'mobile-legends' } },
-            { id: '2', sku_code: 'ML-10', name: '10 Diamonds', price_sell: 3000, category: { slug: 'mobile-legends' } },
-            { id: '3', sku_code: 'ML-50', name: '50 Diamonds', price_sell: 14000, category: { slug: 'mobile-legends' } },
-            { id: '4', sku_code: 'FF-100', name: '100 Diamonds', price_sell: 15000, category: { slug: 'free-fire' } },
-        ];
-        res.json({ success: true, data: mockProducts });
+    } catch (error: any) {
+        console.error("DB Error:", error);
+        res.status(500).json({ success: false, message: "System Error: Failed to fetch products" });
     }
 };
 
@@ -224,14 +217,8 @@ export const createTransaction = async (req: Request, res: Response) => {
                 include: { category: true }
             });
         } catch (dbError) {
-            console.warn("DB Connection Failed, using Mock Product");
-            const mockProducts = [
-                { id: '1', sku_code: 'ML-5', name: '5 Diamonds', price_sell: 1500, category: { slug: 'mobile-legends' } },
-                { id: '2', sku_code: 'ML-10', name: '10 Diamonds', price_sell: 3000, category: { slug: 'mobile-legends' } },
-                { id: '3', sku_code: 'ML-50', name: '50 Diamonds', price_sell: 14000, category: { slug: 'mobile-legends' } },
-                { id: '4', sku_code: 'FF-100', name: '100 Diamonds', price_sell: 15000, category: { slug: 'free-fire' } },
-            ];
-            product = mockProducts.find(p => p.id === productId);
+            console.error("DB Connection Failed:", dbError);
+            return res.status(500).json({ success: false, message: 'Database Error' });
         }
 
         if (!product) return res.status(404).json({ success: false, message: 'Product Not Found' });
@@ -243,13 +230,12 @@ export const createTransaction = async (req: Request, res: Response) => {
         const validVoucherCode = req.body.voucherCode;
 
         // --- VOUCHER LOGIC ---
+        // --- VOUCHER LOGIC (Fixed Race Condition) ---
         if (validVoucherCode) {
-            let voucher;
-            try {
-                voucher = await prisma.voucher.findUnique({ where: { code: validVoucherCode } });
-            } catch (voucherError) {
-                console.warn("DB Voucher Check Failed:", voucherError);
-            }
+            // Logic moved to atomic transaction block below for safety
+            // We just verify existence here initially, but final check must be atomic
+            const voucher = await prisma.voucher.findUnique({ where: { code: validVoucherCode } });
+
             if (voucher) {
                 const now = new Date();
                 if (voucher.isActive && voucher.stock > 0 && voucher.expiresAt > now && amount >= voucher.minPurchase) {
@@ -260,14 +246,12 @@ export const createTransaction = async (req: Request, res: Response) => {
                         if (voucher.maxDiscount && discountAmount > voucher.maxDiscount) discountAmount = voucher.maxDiscount;
                     }
                     if (discountAmount > amount) discountAmount = amount;
-                    amount -= discountAmount;
-
-                    // Decrement Stock
-                    await prisma.voucher.update({ where: { id: voucher.id }, data: { stock: { decrement: 1 } } });
-                    console.log(`🎟️ [VOUCHER] Applied ${validVoucherCode}: -${discountAmount} | Final: ${amount}`);
+                    // Note: Stock decrement happens in Prisma Transaction
                 }
             }
         }
+
+        const finalAmount = amount - discountAmount;
 
         // 3. Handle Payment Method
         if (paymentMethod === 'BALANCE') {
@@ -282,56 +266,84 @@ export const createTransaction = async (req: Request, res: Response) => {
             const jwt = (await import('jsonwebtoken')).default;
             let payerId;
             try {
-                const decoded: any = jwt.verify(token as string, process.env.JWT_SECRET || 'super-secret-key-change-this');
+                if (!process.env.JWT_SECRET) throw new Error("Missing Secret");
+                const decoded: any = jwt.verify(token as string, process.env.JWT_SECRET);
                 payerId = decoded.id;
             } catch (err) {
                 return res.status(403).json({ success: false, message: 'Invalid or Expired Session' });
             }
 
-            // Get User & Check Balance
-            // Use Raw Query or standard findUnique
-            const user = await prisma.user.findUnique({ where: { id: payerId } });
-            if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-            if (user.balance < amount) return res.status(400).json({ success: false, message: 'Insufficient Balance' });
+            // Atomic Transaction: Deduct Balance & Create Transaction & Decrement Voucher
+            // To fix race condition, we perform updates in a transaction and use predicates (where clause)
+            try {
+                await prisma.$transaction(async (tx) => {
+                    // 1. Deduct Balance (Atomic Check)
+                    const payer = await tx.user.update({
+                        where: { id: payerId, balance: { gte: finalAmount } },
+                        data: { balance: { decrement: finalAmount } }
+                    });
 
-            // Atomic Transaction: Deduct Balance & Create Transaction
-            const trx = await prisma.transaction.create({
-                data: {
-                    invoice,
-                    productId,
-                    targetId: userId,
-                    zoneId,
-                    amount,
-                    discountAmount,
-                    voucherCode: validVoucherCode,
-                    status: 'PROCESSING', // Paid, waiting for provider
-                    paymentMethod: 'BALANCE',
-                    userId: user.id,
-                    guestContact: user.phoneNumber || null
+                    // 2. Decrement Voucher (Atomic Check)
+                    if (validVoucherCode && discountAmount > 0) {
+                        await tx.voucher.update({
+                            where: { code: validVoucherCode, stock: { gt: 0 } },
+                            data: { stock: { decrement: 1 } }
+                        });
+                    }
+
+                    // 3. Create Transaction Record
+                    const trx = await tx.transaction.create({
+                        data: {
+                            invoice,
+                            productId,
+                            targetId: userId,
+                            zoneId,
+                            amount: finalAmount,
+                            discountAmount,
+                            voucherCode: validVoucherCode,
+                            status: 'PROCESSING',
+                            paymentMethod: 'BALANCE',
+                            userId: payer.id,
+                            guestContact: payer.phoneNumber || null
+                        }
+                    });
+
+                    // Respond SUCCESS immediately
+                    res.json({
+                        success: true,
+                        data: {
+                            invoice,
+                            status: 'PROCESSING',
+                            productName: product.name,
+                            amount: finalAmount
+                        }
+                    });
+
+                    // Async Process
+                    console.log(`✅ [BALANCE] Payment Success: ${invoice} | User: ${payer.name}`);
+
+                    // Send WA
+                    if (payer.phoneNumber) {
+                        const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n💰 *PEMBAYARAN DITERIMA*\nInvoice: *${invoice}*\nStatus: LUNAS (Saldo)\nTotal Paid: Rp${finalAmount.toLocaleString('id-ID')}\n\n⏳ *Sedang Memproses...*\nOrder Anda sedang dikerjakan oleh sistem. Mohon tunggu 1-3 menit.\n---------------------------`;
+                        whatsappService.sendMessage(payer.phoneNumber, waMsg).catch(console.error);
+                    }
+
+                    processGameTopup(trx.id).catch(err => console.error("Auto Process Error:", err));
+                });
+
+                return; // Response handled inside transaction block
+
+            } catch (txError: any) {
+                if (txError.code === 'P2025') {
+                    // Record to update not found -> Condition failed (Insufficient balance or voucher stock)
+                    return res.status(400).json({ success: false, message: 'Insufficient Balance or Voucher ran out just now.' });
                 }
-            });
-            await prisma.user.update({ where: { id: payerId }, data: { balance: { decrement: amount } } });
-
-            console.log(`✅ [BALANCE] Payment Success: ${invoice} | User: ${user.name}`);
-
-            // Send WA Notification (Payment Received)
-            if (user.phoneNumber) {
-                const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n💰 *PEMBAYARAN DITERIMA*\nInvoice: *${invoice}*\nStatus: LUNAS (Saldo)\nTotal Paid: Rp${amount.toLocaleString('id-ID')}\n\n⏳ *Sedang Memproses...*\nOrder Anda sedang dikerjakan oleh sistem. Mohon tunggu 1-3 menit.\n---------------------------`;
-                whatsappService.sendMessage(user.phoneNumber, waMsg).catch(console.error);
+                throw txError;
             }
 
-            // FIRE AND FORGET: PROCESS GAME TOPUP
-            processGameTopup(trx.id).catch(err => console.error("Auto Process Error:", err));
 
-            return res.json({
-                success: true,
-                data: {
-                    invoice,
-                    status: 'PROCESSING',
-                    productName: product.name,
-                    amount
-                }
-            });
+
+
 
         } else {
             // B. GATEWAY PAYMENT (IPAYMU)
@@ -347,7 +359,8 @@ export const createTransaction = async (req: Request, res: Response) => {
                 try {
                     const token = req.headers.authorization.split(' ')[1];
                     const jwt = (await import('jsonwebtoken')).default;
-                    const decoded: any = jwt.verify(token as string, process.env.JWT_SECRET || 'super-secret-key-change-this');
+                    if (!process.env.JWT_SECRET) throw new Error("Missing Secret");
+                    const decoded: any = jwt.verify(token as string, process.env.JWT_SECRET);
                     userIdForTrx = decoded.id;
                 } catch (e) { }
             }
@@ -779,8 +792,12 @@ export const handleVipCallback = async (req: Request, res: Response) => {
     const apiKey = process.env.VIP_APIKEY || '';
     const mySignature = crypto.createHash('md5').update(apiId + apiKey).digest('hex');
 
-    if (signature !== mySignature) {
-        console.error(`[VIP CALLBACK] Invalid Signature. Got: ${signature}, Expected: ${mySignature}`);
+    // Secure Comparison (Timing Safe)
+    const signatureBuffer = Buffer.from(signature || '');
+    const expectedBuffer = Buffer.from(mySignature);
+
+    if (signatureBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
+        console.error(`[VIP CALLBACK] Invalid Signature. Got: ${signature}`);
         return res.status(403).json({ result: false, message: 'Invalid Signature' });
     }
 

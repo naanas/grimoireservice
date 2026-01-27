@@ -3,6 +3,7 @@ import { createTransaction, getProducts, handleIpaymuCallback, handleVipCallback
 import { authenticateToken } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { createTransactionSchema, createDepositSchema } from '../schemas/transaction.schema.js';
+import { checkGameIdSchema } from '../schemas/transaction.verify.schema.js';
 
 const router = Router();
 
@@ -13,7 +14,7 @@ router.get('/products', getProducts);
 router.get('/check/:id', getTransaction);
 router.post('/create', validate(createTransactionSchema), createTransaction); // Create handles its own auth for Balance
 router.post('/deposit', authenticateToken, validate(createDepositSchema), createDeposit); // Deposit PROTECTED
-router.post('/check-id', checkGameId); // Public
+router.post('/check-id', validate(checkGameIdSchema), checkGameId); // Public
 router.get('/vendor-products', getVendorProducts);
 router.post('/check-status/:id', checkTransactionStatus);
 router.post('/callback/ipaymu', handleIpaymuCallback);

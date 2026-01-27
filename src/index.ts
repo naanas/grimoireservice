@@ -4,6 +4,9 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+
 const app = express();
 const PORT = process.env.PORT || 4000;
 
@@ -14,25 +17,50 @@ import contentRoutes from './routes/content.route.js';
 import voucherRoutes from './routes/voucher.route.js';
 import adminRoutes from './routes/admin.route.js';
 
-app.use(cors());
+// Security Middlewares
+app.use(helmet());
+app.use(cors({
+    origin: process.env.FRONTEND_URL || '*', // Restrict in production
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per windowMs
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+app.use(limiter);
+
 app.use(express.json());
 // Ipaymu Callback uses x-www-form-urlencoded
 app.use(express.urlencoded({ extended: true }));
 
-// Request Logger
+// Request Logger (Secure)
 app.use((req, res, next) => {
+    // Skip logging for health checks to reduce noise
+    if (req.url === '/api/health') return next();
+
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
 
     if (req.body && Object.keys(req.body).length > 0) {
         // Create a shallow copy to avoid mutating the original body
         const safeBody = { ...req.body };
 
-        // Mask sensitive fields
-        const sensitiveFields = ['password', 'token', 'secret', 'pin', 'cvv'];
-        sensitiveFields.forEach(field => {
-            if (safeBody[field]) safeBody[field] = '***MASKED***';
-        });
+        // Deep Mask sensitive fields function
+        const maskSensitive = (obj: any) => {
+            const sensitiveFields = ['password', 'token', 'secret', 'pin', 'cvv', 'creditCard'];
+            for (const key in obj) {
+                if (typeof obj[key] === 'object' && obj[key] !== null) {
+                    maskSensitive(obj[key]);
+                } else if (sensitiveFields.some(field => key.toLowerCase().includes(field))) {
+                    obj[key] = '***MASKED***';
+                }
+            }
+        };
 
+        maskSensitive(safeBody);
         console.log('📦 Body:', JSON.stringify(safeBody, null, 2));
     }
     next();

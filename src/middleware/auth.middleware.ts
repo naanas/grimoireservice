@@ -13,7 +13,11 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
     if (!token) return res.status(401).json({ success: false, message: 'Access Denied: No Token Provided' });
 
     try {
-        const verified = jwt.verify(token, process.env.JWT_SECRET || 'super-secret-key-change-this');
+        if (!process.env.JWT_SECRET) {
+            console.error("FATAL: JWT_SECRET is not defined.");
+            return res.status(500).json({ success: false, message: "Internal Server Error" });
+        }
+        const verified = jwt.verify(token, process.env.JWT_SECRET);
         req.user = verified;
         next();
     } catch (error) {
