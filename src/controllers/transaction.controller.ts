@@ -195,10 +195,17 @@ export const checkGameId = async (req: Request, res: Response) => {
         if (result.success) {
             res.json({ success: true, data: result.data });
         } else {
-            res.status(400).json({ success: false, message: 'ID Not Found' });
+            console.warn(`[CHECK-ID-FAIL] Code: ${codeToSend} User: ${userId} -> Msg: ${result.message}`);
+            // Forward provider message if available (e.g. "User Not Found"), otherwise fallback
+            // If message is unrelated to finding user (e.g. system error), use 500? No, provider usually returns 200 with error msg.
+            // Let's stick to 400 for user errors.
+            const status = result.message?.toLowerCase().includes('error') ? 500 : 400;
+            res.status(status).json({ success: false, message: result.message || 'ID Not Found' });
         }
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        // Log only message to avoid stack trace leak
+        console.error(`[CHECK-ID-ERR]`, error.message);
+        res.status(500).json({ success: false, message: 'System Error' });
     }
 };
 
