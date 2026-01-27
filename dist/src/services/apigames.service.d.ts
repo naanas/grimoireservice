@@ -23,25 +23,26 @@ export declare const getMerchantServices: () => Promise<{
 export declare const placeOrder: (refId: string, sku: string, dest: string, zoneId?: string) => Promise<{
     success: boolean;
     data: {
-        ref_id: string;
-        status: string;
-        trx_id: string;
-        sn: string;
-        price: number;
-        message: string;
-        trxId?: never;
-    };
-    message?: never;
-} | {
-    success: boolean;
-    data: {
         ref_id: any;
         trxId: any;
         status: any;
         sn: any;
         message: any;
         price: any;
-        trx_id?: never;
+    };
+    message?: never;
+} | {
+    success: boolean;
+    message: any;
+    data?: never;
+}>;
+export declare const checkTransaction: (refId: string) => Promise<{
+    success: boolean;
+    data: {
+        ref_id: any;
+        status: any;
+        sn: any;
+        message: any;
     };
     message?: never;
 } | {

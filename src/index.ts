@@ -16,6 +16,7 @@ import authRoutes from './routes/auth.route.js';
 import contentRoutes from './routes/content.route.js';
 import voucherRoutes from './routes/voucher.route.js';
 import adminRoutes from './routes/admin.route.js';
+import { PROVIDER } from './services/game.service.js';
 
 // Security Middlewares
 app.use(helmet());
@@ -96,13 +97,12 @@ const startServer = async () => {
         console.error('⚠️  System running in Limited Mode (Mock Data only for Products)');
     }
 
-    // 2. Check Payment Gateway Config
     // 2. Check Configurations
     const isMock = process.env.MOCK_MODE === 'true';
     if (isMock) {
         console.log('✅ Game Provider: MOCK MODE (Safe for Dev)');
     } else {
-        console.log('⚠️  Game Provider: REAL API (Careful!)');
+        console.log(`⚠️  Game Provider: ${PROVIDER} (REAL API - Careful!)`);
     }
 
     // Check Payment Gateway Config (Dynamic)
@@ -116,7 +116,7 @@ const startServer = async () => {
     }
 
     app.listen(PORT, () => {
-        console.log(`🚀 Server running on port ${PORT} (Updated)`);
+        console.log(`🚀 Server running on port ${PORT}`);
     });
 };
 

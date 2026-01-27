@@ -1,20 +1,30 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-const prisma = new PrismaClient();
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-this';
 // POST /api/auth/register
 export const register = async (req, res) => {
     try {
-        const { name, email, password } = req.body;
+        const { name, email, password, phoneNumber } = req.body;
         // 1. Validation
-        if (!name || !email || !password) {
-            return res.status(400).json({ success: false, message: "All fields are required" });
+        if (!name || !email || !password || !phoneNumber) {
+            return res.status(400).json({ success: false, message: "All fields are required (including WhatsApp Number)" });
         }
-        // 2. Check if user exists
-        const existingUser = await prisma.user.findUnique({ where: { email } });
+        // Validate Phone Format (Basic)
+        if (!phoneNumber.startsWith('08') && !phoneNumber.startsWith('62')) {
+            return res.status(400).json({ success: false, message: "Invalid Phone Number format (Use 08xx or 62xx)" });
+        }
+        // 2. Check if user exists (Email OR Phone)
+        const existingUser = await prisma.user.findFirst({
+            where: {
+                OR: [
+                    { email },
+                    { phoneNumber }
+                ]
+            }
+        });
         if (existingUser) {
-            return res.status(400).json({ success: false, message: "Email already registered" });
+            return res.status(400).json({ success: false, message: "Email or Phone Number already registered" });
         }
         // 3. Hash Password
         const hashedPassword = await bcrypt.hash(password, 10);
@@ -23,17 +33,18 @@ export const register = async (req, res) => {
             data: {
                 name,
                 email,
+                phoneNumber,
                 password: hashedPassword,
                 role: 'USER'
             }
         });
         // 5. Generate Token
-        const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ id: user.id, role: user.role, phoneNumber: user.phoneNumber }, JWT_SECRET, { expiresIn: '7d' });
         res.status(201).json({
             success: true,
             message: "User registered successfully",
             data: {
-                user: { id: user.id, name: user.name, email: user.email },
+                user: { id: user.id, name: user.name, email: user.email, phoneNumber: user.phoneNumber },
                 token
             }
         });
@@ -60,12 +71,12 @@ export const login = async (req, res) => {
             return res.status(401).json({ success: false, message: "Invalid credentials" });
         }
         console.log(`✅ [LOGIN] Success for: ${email}`);
-        const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ id: user.id, role: user.role, phoneNumber: user.phoneNumber }, JWT_SECRET, { expiresIn: '7d' });
         res.json({
             success: true,
             message: "Login successful",
             data: {
-                user: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance },
+                user: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance, phoneNumber: user.phoneNumber },
                 token
             }
         });
@@ -88,7 +99,7 @@ export const getProfile = async (req, res) => {
             return res.status(404).json({ success: false, message: "User not found" });
         res.json({
             success: true,
-            data: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance }
+            data: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance, phoneNumber: user.phoneNumber }
         });
     }
     catch (error) {

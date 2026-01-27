@@ -15,11 +15,13 @@ export declare const checkTransaction: (trxId: string) => Promise<{
     success: boolean;
     status: any;
     statusDesc: any;
+    data: any;
     message?: never;
 } | {
     success: boolean;
     message: string;
     status?: never;
     statusDesc?: never;
+    data?: never;
 }>;
 //# sourceMappingURL=ipaymu.service.d.ts.map

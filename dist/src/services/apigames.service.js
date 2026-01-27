@@ -2,7 +2,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 dotenv.config();
-const MOCK_MODE = process.env.MOCK_MODE === 'true';
+// Mock Mode Removed
 const APIGAMES_URL = process.env.APIGAMES_URL || 'https://v1.apigames.id';
 const MERCHANT_ID = process.env.APIGAMES_MERCHANT_ID || '';
 const SECRET_KEY = process.env.APIGAMES_SECRET || '';
@@ -11,19 +11,12 @@ const createSignature = (payload) => {
     return crypto.createHash('md5').update(payload).digest('hex');
 };
 export const checkProfile = async (gameCode, userId, zoneId) => {
-    console.log(`[APIGAMES] Check Profile: ${gameCode} ${userId} ${zoneId} | Mock: ${MOCK_MODE}`);
-    if (MOCK_MODE) {
-        // Simulate API Delay
-        await new Promise(r => setTimeout(r, 500));
-        return {
-            success: true,
-            data: {
-                username: `SatanicPlayer_${userId}`,
-                user_id: userId,
-                zone_id: zoneId || '666'
-            }
-        };
-    }
+    console.log(`[APIGAMES] Check Profile: ${gameCode} ${userId} ${zoneId}`);
+    // Map Game Codes for Apigames
+    if (gameCode === 'mobile-legends')
+        gameCode = 'mobilelegend';
+    if (gameCode === 'free-fire')
+        gameCode = 'freefire';
     try {
         // Signature: md5(merchant_id + secret_key)
         const signature = createSignature(MERCHANT_ID + SECRET_KEY);
@@ -63,17 +56,7 @@ export const checkProfile = async (gameCode, userId, zoneId) => {
     }
 };
 export const getMerchantServices = async () => {
-    console.log(`[APIGAMES] Fetching Product List... | Mock: ${MOCK_MODE}`);
-    if (MOCK_MODE) {
-        // Return existing mock data structure
-        return {
-            success: true,
-            data: [
-                { code: 'ML-5', name: 'Mobile Legends 5 Diamonds', price: 1500, category: 'Mobile Legends' },
-                { code: 'FF-100', name: 'Free Fire 100 Diamonds', price: 14000, category: 'Free Fire' }
-            ]
-        };
-    }
+    console.log(`[APIGAMES] Fetching Product List...`);
     try {
         // Signature: md5(merchant_id + secret_key)
         const signature = createSignature(MERCHANT_ID + SECRET_KEY);
@@ -98,21 +81,7 @@ export const getMerchantServices = async () => {
     }
 };
 export const placeOrder = async (refId, sku, dest, zoneId) => {
-    console.log(`[APIGAMES] Order: ${refId} ${sku} to ${dest} | Mock: ${MOCK_MODE}`);
-    if (MOCK_MODE) {
-        await new Promise(r => setTimeout(r, 1000));
-        return {
-            success: true,
-            data: {
-                ref_id: refId,
-                status: 'Pending',
-                trx_id: `API_${Date.now()}`,
-                sn: '',
-                price: 10000,
-                message: 'Order Created'
-            }
-        };
-    }
+    console.log(`[APIGAMES] Order: ${refId} ${sku} to ${dest}`);
     try {
         // Signature: md5(merchant_id + secret_key + ref_id)
         const signature = createSignature(`${MERCHANT_ID}:${SECRET_KEY}:${refId}`);
@@ -146,6 +115,33 @@ export const placeOrder = async (refId, sku, dest, zoneId) => {
     catch (error) {
         console.error('[APIGAMES] Order Error:', error.message);
         return { success: false, message: 'Provider Connection Error' };
+    }
+};
+export const checkTransaction = async (refId) => {
+    console.log(`[APIGAMES] Check Status: ${refId}`);
+    try {
+        const signature = createSignature(`${MERCHANT_ID}:${SECRET_KEY}:${refId}`);
+        const url = `${APIGAMES_URL}/v2/transaksi/status?merchant_id=${MERCHANT_ID}&ref_id=${refId}&signature=${signature}`;
+        const response = await axios.get(url);
+        const resData = response.data;
+        if (resData.status === 1 || (resData.data && resData.data.status)) {
+            return {
+                success: true,
+                data: {
+                    ref_id: resData.data.ref_id,
+                    status: resData.data.status,
+                    sn: resData.data.sn,
+                    message: resData.data.message
+                }
+            };
+        }
+        else {
+            return { success: false, message: resData.error_msg || 'Status Check Failed' };
+        }
+    }
+    catch (error) {
+        console.error('[APIGAMES] Status Check Error:', error.message);
+        return { success: false, message: 'Provider Error' };
     }
 };
 //# sourceMappingURL=apigames.service.js.map

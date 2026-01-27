@@ -2,23 +2,47 @@ import axios from 'axios';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 dotenv.config();
-// Config
-const IPAYMU_BASE_URL = 'https://sandbox.ipaymu.com/api/v2';
-const IPAYMU_API_KEY = (process.env.IPAYMU_API_KEY || '').trim();
-const IPAYMU_VA = (process.env.IPAYMU_VA || '').trim();
+// Config - Dynamic Loading
+const MODE = process.env.PAYMENT_ENV === 'PRODUCTION' ? 'PROD' : 'DEV';
+let IPAYMU_BASE_URL;
+let IPAYMU_API_KEY;
+let IPAYMU_VA;
+if (MODE === 'PROD') {
+    IPAYMU_BASE_URL = process.env.IPAYMU_API_URL_PROD || process.env.IPAYMU_API_URL || '';
+    IPAYMU_API_KEY = (process.env.IPAYMU_API_KEY_PROD || process.env.IPAYMU_API_KEY || '').trim();
+    IPAYMU_VA = (process.env.IPAYMU_VA_PROD || process.env.IPAYMU_VA || '').trim();
+}
+else {
+    IPAYMU_BASE_URL = process.env.IPAYMU_API_URL_DEV || process.env.IPAYMU_API_URL || '';
+    IPAYMU_API_KEY = (process.env.IPAYMU_API_KEY_DEV || process.env.IPAYMU_API_KEY || '').trim();
+    IPAYMU_VA = (process.env.IPAYMU_VA_DEV || process.env.IPAYMU_VA || '').trim();
+}
+console.log(`[IPAYMU] Initialized Mode: ${MODE}`);
 export const initPayment = async (trxId, amount, buyerName, buyerEmail, paymentMethod, returnPath) => {
     console.log(`[IPAYMU] Init Payment: ${trxId} Rp${amount} via ${paymentMethod}`);
     // Debugging Credentials (Masked)
     const keyStart = IPAYMU_API_KEY.substring(0, 5);
     const keyEnd = IPAYMU_API_KEY.substring(IPAYMU_API_KEY.length - 5);
     console.log(`[IPAYMU] Config: VA='${IPAYMU_VA}' | Key='${keyStart}***${keyEnd}'`);
-    // Adjust payment method code
+    // Map Payment Method to Ipaymu valid values
     let method = 'qris';
-    if (paymentMethod.toLowerCase().includes('va'))
+    let channel = null;
+    const pmLower = paymentMethod.toLowerCase();
+    if (pmLower === 'qris') {
+        method = 'qris';
+        channel = 'qris'; // Channel for QRIS is usually 'qris' or 'mpm'
+    }
+    else if (pmLower === 'va') {
         method = 'va';
-    if (paymentMethod.toLowerCase().includes('alfamart') || paymentMethod.toLowerCase().includes('indomaret'))
-        method = 'cstore';
-    // 1. Prepare Body
+        channel = null; // Generic VA, let user choose on Ipaymu page (if supported) or default? 
+        // Note: If Ipaymu Direct API requires channel, this might fail without a channel. 
+        // But for "Redirect" payment (which returnUrl implies), sending just method 'va' usually opens the list.
+    }
+    else if (pmLower.startsWith('va_')) {
+        // Handle specific like VA_BCA -> method='va', channel='bca'
+        method = 'va';
+        channel = pmLower.replace('va_', '');
+    }
     const returnUrl = process.env.NEXT_PUBLIC_FRONTEND_URL || 'http://localhost:3000';
     const backendUrl = process.env.BACKEND_URL || 'http://localhost:4000'; // Should be ngrok/public URL for callbacks
     // Use specific return path (e.g. /order/mobile-legends) or default to history
@@ -31,12 +55,14 @@ export const initPayment = async (trxId, amount, buyerName, buyerEmail, paymentM
         "cancelUrl": `${returnUrl}/order`,
         "notifyUrl": `${backendUrl}/api/callback/ipaymu`,
         "referenceId": trxId,
-        "buyerName": "Guest",
-        "buyerEmail": "guest@gmail.com",
+        "buyerName": buyerName || "Guest",
+        "buyerEmail": buyerEmail || "guest@gmail.com",
         "buyerPhone": "08123456789",
-        "paymentMethod": method,
-        "paymentChannel": paymentMethod.toLowerCase().replace('va_', '').replace('qris', 'qris')
+        "paymentMethod": method
     };
+    if (channel) {
+        bodyObj.paymentChannel = channel;
+    }
     if (bodyObj.notifyUrl.includes('localhost')) {
         console.warn('⚠️  [IPAYMU] WARNING: notifyUrl is set to LOCALHOST. Callbacks will FAIL unless you use ngrok/tunnel.');
     }
@@ -109,8 +135,9 @@ export const checkTransaction = async (trxId) => {
             console.log(`[IPAYMU] Check Result: ${resData.Data.Status} (${resData.Data.StatusDesc})`);
             return {
                 success: true,
-                status: resData.Data.Status, // 1 = Pending, 6 = Success ? (Need to verify Ipaymu docs, usually 'berhasil' in callback map to 1/6)
-                statusDesc: resData.Data.StatusDesc
+                status: resData.Data.Status, // 1 = Pending, 6 = Success
+                statusDesc: resData.Data.StatusDesc,
+                data: resData.Data // Expose full data (Channel, Via, PaymentNo, etc.)
             };
         }
         return { success: false, message: 'Transaction Not Found in Ipaymu' };

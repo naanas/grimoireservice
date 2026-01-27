@@ -3,7 +3,7 @@ import * as vip from './vip.service.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const PROVIDER = process.env.GAME_PROVIDER || 'APIGAMES';
+export const PROVIDER = process.env.GAME_PROVIDER || '';
 
 console.log(`🎮 [GAME SERVICE] Selected Provider: ${PROVIDER}`);
 

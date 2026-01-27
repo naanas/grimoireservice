@@ -42,6 +42,7 @@ model Category {
   name      String
   slug      String    @unique
   image     String?   // URL to image
+  brand     String?   // Grouping (e.g. "Mobile Legends", "Ragnarok")
   isActive          Boolean   @default(true)
   
   // Game Feature Config
@@ -65,6 +66,7 @@ model Product {
   price_sell    Float    // Price to User
   category      Category @relation(fields: [categoryId], references: [id])
   categoryId    String
+  group         String   @default("Top Up") // e.g. "Event", "Starlight", "Joki"
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
