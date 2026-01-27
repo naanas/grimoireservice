@@ -105,10 +105,14 @@ const startServer = async () => {
         console.log('⚠️  Game Provider: REAL API (Careful!)');
     }
 
-    if (process.env.IPAYMU_API_KEY) {
-        console.log('✅ Payment Gateway: CONNECTED (Ipaymu Production/Sandbox)');
+    // Check Payment Gateway Config (Dynamic)
+    const paymentEnv = process.env.PAYMENT_ENV === 'PRODUCTION' ? 'PROD' : 'DEV';
+    const activeKey = process.env[`IPAYMU_API_KEY_${paymentEnv}`];
+
+    if (activeKey) {
+        console.log(`✅ Payment Gateway: CONNECTED (Ipaymu ${paymentEnv} Environment)`);
     } else {
-        console.warn('❌ Payment Gateway: MISSING API KEY');
+        console.warn(`❌ Payment Gateway: MISSING API KEY for ${paymentEnv} environment! Check .env`);
     }
 
     app.listen(PORT, () => {

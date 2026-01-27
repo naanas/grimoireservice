@@ -3,10 +3,24 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 dotenv.config();
 
-// Config
-const IPAYMU_BASE_URL = process.env.IPAYMU_API_URL || '';
-const IPAYMU_API_KEY = (process.env.IPAYMU_API_KEY || '').trim();
-const IPAYMU_VA = (process.env.IPAYMU_VA || '').trim();
+// Config - Dynamic Loading
+const MODE = process.env.PAYMENT_ENV === 'PRODUCTION' ? 'PROD' : 'DEV';
+
+let IPAYMU_BASE_URL: string;
+let IPAYMU_API_KEY: string;
+let IPAYMU_VA: string;
+
+if (MODE === 'PROD') {
+    IPAYMU_BASE_URL = process.env.IPAYMU_API_URL_PROD || process.env.IPAYMU_API_URL || '';
+    IPAYMU_API_KEY = (process.env.IPAYMU_API_KEY_PROD || process.env.IPAYMU_API_KEY || '').trim();
+    IPAYMU_VA = (process.env.IPAYMU_VA_PROD || process.env.IPAYMU_VA || '').trim();
+} else {
+    IPAYMU_BASE_URL = process.env.IPAYMU_API_URL_DEV || process.env.IPAYMU_API_URL || '';
+    IPAYMU_API_KEY = (process.env.IPAYMU_API_KEY_DEV || process.env.IPAYMU_API_KEY || '').trim();
+    IPAYMU_VA = (process.env.IPAYMU_VA_DEV || process.env.IPAYMU_VA || '').trim();
+}
+
+console.log(`[IPAYMU] Initialized Mode: ${MODE}`);
 
 export const initPayment = async (trxId: string, amount: number, buyerName: string, buyerEmail: string, paymentMethod: string, returnPath?: string) => {
     console.log(`[IPAYMU] Init Payment: ${trxId} Rp${amount} via ${paymentMethod}`);
