@@ -33,6 +33,7 @@ model User {
   updatedAt DateTime @updatedAt
   
   transactions Transaction[]
+  chatSessions ChatSession[]
 
   @@map("users")
 }
@@ -147,4 +148,31 @@ model Voucher {
   updatedAt   DateTime    @updatedAt
   
   @@map("vouchers")
+}
+
+model ChatSession {
+  id        String   @id @default(uuid())
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?
+  guestName String?  // For guest users
+  guestEmail String? // Optional contact for guest
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  messages  ChatMessage[]
+  
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id        String      @id @default(uuid())
+  session   ChatSession @relation(fields: [sessionId], references: [id])
+  sessionId String
+  sender    Role        @default(USER) // USER or ADMIN
+  content   String
+  isRead    Boolean     @default(false)
+  createdAt DateTime    @default(now())
+  
+  @@map("chat_messages")
 }
