@@ -2,7 +2,10 @@ import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-this';
+if (!process.env.JWT_SECRET) {
+    throw new Error("Fatal Error: JWT_SECRET is not defined in environment variables.");
+}
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // POST /api/auth/register
 export const register = async (req: Request, res: Response) => {
