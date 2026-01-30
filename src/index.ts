@@ -22,6 +22,8 @@ const io = new Server(httpServer, {
     }
 });
 
+app.set('io', io);
+
 import transactionRoutes from './routes/transaction.route.js';
 import authRoutes from './routes/auth.route.js';
 
