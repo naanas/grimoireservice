@@ -12,6 +12,8 @@ export declare const processGameTopup: (trxId: string) => Promise<{
 }>;
 export declare const getCategories: (req: Request, res: Response) => Promise<void>;
 export declare const getCategoryBySlug: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
+export declare const getBestSellingCategories: (req: Request, res: Response) => Promise<void>;
+export declare const getPopularCategories: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const getProducts: (req: Request, res: Response) => Promise<void>;
 export declare const getVendorProducts: (req: Request, res: Response) => Promise<void>;
 export declare const checkGameId: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;

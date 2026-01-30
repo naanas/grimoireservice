@@ -1,3 +1,4 @@
+export declare const PROVIDER: string;
 export declare const checkProfile: (gameCode: string, userId: string, zoneId?: string) => Promise<{
     success: boolean;
     data: {

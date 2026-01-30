@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createTransaction, getProducts, handleIpaymuCallback, handleVipCallback, getTransaction, getCategories, getCategoryBySlug, createDeposit, getHistory, checkGameId, getVendorProducts, checkTransactionStatus } from '../controllers/transaction.controller.js';
+import { createTransaction, getProducts, handleIpaymuCallback, handleVipCallback, getTransaction, getCategories, getCategoryBySlug, createDeposit, getHistory, checkGameId, getVendorProducts, checkTransactionStatus, getBestSellingCategories, getPopularCategories } from '../controllers/transaction.controller.js';
 import { authenticateToken } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { createTransactionSchema, createDepositSchema } from '../schemas/transaction.schema.js';
@@ -7,6 +7,8 @@ import { checkGameIdSchema } from '../schemas/transaction.verify.schema.js';
 const router = Router();
 router.get('/history', authenticateToken, getHistory);
 router.get('/categories', getCategories);
+router.get('/categories/best-selling', getBestSellingCategories);
+router.get('/categories/popular', getPopularCategories);
 router.get('/categories/:slug', getCategoryBySlug);
 router.get('/products', getProducts);
 router.get('/check/:id', getTransaction);

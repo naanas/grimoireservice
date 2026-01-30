@@ -10,6 +10,7 @@ import * as crypto from 'crypto'; // Added for VIP callback signature validation
  */
 export const processGameTopup = async (trxId) => {
     console.log(`⚙️ [PROCESS] Triggering Provider for Trx: ${trxId}`);
+    console.log(`⚠️  Game Provider: ${gameProvider.PROVIDER} (REAL API - Careful!)`);
     try {
         const trx = await prisma.transaction.findUnique({
             where: { id: trxId },
@@ -91,7 +92,20 @@ export const getCategories = async (req, res) => {
             where: { isActive: true },
             orderBy: { name: 'asc' }
         });
-        res.json({ success: true, data: categories });
+        // Group by Brand to return unique entries for Home Page
+        const uniqueBrands = [];
+        const seenBrands = new Set();
+        for (const cat of categories) {
+            const brand = cat.brand || cat.name; // Fallback to name if brand not set
+            if (!seenBrands.has(brand)) {
+                seenBrands.add(brand);
+                uniqueBrands.push({
+                    ...cat,
+                    name: brand // Display Brand Name instead of specific Category Name
+                });
+            }
+        }
+        res.json({ success: true, data: uniqueBrands });
     }
     catch (error) {
         console.error("DB Error:", error);
@@ -107,22 +121,141 @@ export const getCategoryBySlug = async (req, res) => {
         });
         if (!category)
             return res.status(404).json({ success: false, message: "Category not found" });
-        res.json({ success: true, data: category });
+        // Fetch Siblings (Variations)
+        let variations = [];
+        if (category.brand) {
+            variations = await prisma.category.findMany({
+                where: {
+                    brand: category.brand,
+                    isActive: true,
+                    slug: { not: category.slug } // Exclude self
+                }
+            });
+        }
+        // If no brand or no other variations, 'variations' will just be empty or just self if we queried differently.
+        // Let's ensure 'variations' contains at least itself if brand exists, or logic to handle single items.
+        // If brand is null, variations is empty.
+        res.json({ success: true, data: { ...category, variations } });
     }
     catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+// GET /api/categories/best-selling
+export const getBestSellingCategories = async (req, res) => {
+    try {
+        // Group transactions by productId to get count
+        // Then we need to map to categories. 
+        // Efficient way: Raw Query or 2 steps (Aggregate -> Fetch) where we aggregate by product, then fetch products.
+        // Even better: Aggregate directly if possible. 
+        // For Prisma, easiest is GroupBy on Transaction, but we can't join in GroupBy.
+        // Let's use Raw Query for performance and "3 table join" logic requested.
+        // "get value categorynya join kan 3 table yaitu table transavtion by product id, table product by categiory id"
+        // UPDATED: Group by BRAND to avoid duplicates on home page
+        const result = await prisma.$queryRaw `
+            SELECT 
+                MIN(c.id) as id, 
+                COALESCE(c.brand, c.name) as name, 
+                MIN(c.slug) as slug, 
+                MIN(c.image) as image, 
+                COUNT(t.id) as total_sales
+            FROM transactions t
+            JOIN products p ON t."productId" = p.id
+            JOIN categories c ON p."categoryId" = c.id
+            WHERE t.status = 'SUCCESS'
+            GROUP BY COALESCE(c.brand, c.name)
+            ORDER BY total_sales DESC
+            LIMIT 10
+        `;
+        // Serialize BigInt if any returns from Count
+        const formatted = result.map(item => ({
+            ...item,
+            total_sales: Number(item.total_sales)
+        }));
+        res.json({ success: true, data: formatted });
+    }
+    catch (error) {
+        console.error("Best Selling Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+// GET /api/categories/popular
+export const getPopularCategories = async (req, res) => {
+    try {
+        // Defined as "Trending" (Last 7 Days)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        const result = await prisma.$queryRaw `
+             SELECT 
+                MIN(c.id) as id, 
+                COALESCE(c.brand, c.name) as name, 
+                MIN(c.slug) as slug, 
+                MIN(c.image) as image, 
+                COUNT(t.id) as trend_score
+            FROM transactions t
+            JOIN products p ON t."productId" = p.id
+            JOIN categories c ON p."categoryId" = c.id
+            WHERE t.status = 'SUCCESS' AND t."createdAt" >= ${sevenDaysAgo}
+            GROUP BY COALESCE(c.brand, c.name)
+            ORDER BY trend_score DESC
+            LIMIT 10
+        `;
+        // Fallback: If no trending data (new app), return random or all time
+        if (result.length === 0) {
+            const fallback = await prisma.$queryRaw `
+                SELECT c.id, c.name, c.slug, c.image, 0 as total_sales
+                FROM categories c
+                WHERE c."isActive" = true
+                ORDER BY RANDOM()
+                LIMIT 10
+            `;
+            return res.json({ success: true, data: fallback });
+        }
+        const formatted = result.map(item => ({
+            ...item,
+            trend_score: Number(item.trend_score),
+            total_sales: Number(item.trend_score) // Keep compatibility if frontend expects total_sales
+        }));
+        res.json({ success: true, data: formatted });
+    }
+    catch (error) {
+        console.error("Popular Error:", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
 // GET /api/products
 export const getProducts = async (req, res) => {
     try {
-        const { category } = req.query;
+        const { category, includeVariations } = req.query;
+        let whereClause = { isActive: true };
+        if (category) {
+            if (includeVariations === 'true') {
+                // Fetch products for ALL variations of this category's brand
+                const rootCat = await prisma.category.findUnique({ where: { slug: String(category) } });
+                if (rootCat && rootCat.brand) {
+                    // Match any category with the same BRAND
+                    whereClause.category = {
+                        brand: rootCat.brand,
+                        isActive: true
+                    };
+                }
+                else {
+                    // Fallback if no brand or cat not found: just match slug
+                    whereClause.category = { slug: String(category) };
+                }
+            }
+            else {
+                // Default: Match specific category slug only
+                whereClause.category = { slug: String(category) };
+            }
+        }
         const products = await prisma.product.findMany({
-            where: {
-                isActive: true,
-                ...(category ? { category: { slug: String(category) } } : {})
-            },
-            include: { category: true }
+            where: whereClause,
+            include: { category: true },
+            orderBy: [
+                { category: { name: 'asc' } }, // Sort by Category Name first (e.g. A, B, Global)
+                { price_sell: 'asc' }
+            ]
         });
         res.json({ success: true, data: products });
     }

@@ -131,8 +131,13 @@ export const getAllProducts = async (req: Request, res: Response) => {
         const limit = Number(req.query.limit) || 50; // More items for products
         const skip = (page - 1) * limit;
         const search = req.query.search as string;
+        const categoryId = req.query.categoryId as string;
 
         const whereClause: any = {};
+        if (categoryId && categoryId !== 'all') {
+            whereClause.categoryId = categoryId;
+        }
+
         if (search) {
             whereClause.OR = [
                 { name: { contains: search, mode: 'insensitive' } },
@@ -266,6 +271,116 @@ export const syncProducts = async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error('❌ Sync Error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+
+
+// GET /api/admin/categories
+export const getAllCategories = async (req: Request, res: Response) => {
+    try {
+        const search = req.query.search as string;
+        const isActive = req.query.isActive as string; // 'true', 'false', or undefined
+        const whereClause: any = {};
+
+        if (isActive && isActive !== 'all') {
+            whereClause.isActive = isActive === 'true';
+        }
+
+        if (search) {
+            whereClause.OR = [
+                { name: { contains: search, mode: 'insensitive' } },
+                { slug: { contains: search, mode: 'insensitive' } },
+                { code: { contains: search, mode: 'insensitive' } }
+            ];
+        }
+
+        const limitQuery = req.query.limit;
+
+        if (limitQuery === 'all') {
+            const categories = await prisma.category.findMany({
+                where: whereClause,
+                orderBy: { name: 'asc' },
+                include: { _count: { select: { products: true } } }
+            });
+            res.json({ success: true, data: categories });
+            return;
+        }
+
+        const page = Number(req.query.page) || 1;
+        const limit = Number(limitQuery) || 10;
+        const skip = (page - 1) * limit;
+
+        const [total, categories] = await Promise.all([
+            prisma.category.count({ where: whereClause }),
+            prisma.category.findMany({
+                where: whereClause,
+                skip,
+                take: limit,
+                orderBy: { name: 'asc' },
+                include: { _count: { select: { products: true } } }
+            })
+        ]);
+
+        res.json({
+            success: true,
+            data: {
+                categories,
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    pages: Math.ceil(total / limit)
+                }
+            }
+        });
+    } catch (error: any) {
+        console.error("Get Categories Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// PATCH /api/admin/categories/:id
+export const updateCategory = async (req: Request, res: Response) => {
+    try {
+        const id = String(req.params.id);
+        const { profitMargin, isActive, name, requiresZoneId, requiresServerId } = req.body;
+
+        console.log(`🛠️ [Admin] Updating Category ${id}...`);
+
+        // 1. Update Category Details
+        const updateData: any = {};
+        if (profitMargin !== undefined) updateData.profitMargin = Number(profitMargin);
+        if (isActive !== undefined) updateData.isActive = Boolean(isActive);
+        if (name !== undefined) updateData.name = String(name);
+        if (requiresZoneId !== undefined) updateData.requiresZoneId = Boolean(requiresZoneId);
+        if (requiresServerId !== undefined) updateData.requiresServerId = Boolean(requiresServerId);
+
+        const category = await prisma.category.update({
+            where: { id },
+            data: updateData
+        });
+
+        // 2. If Profit Margin Changed -> Recalculate All Products in this Category
+        if (profitMargin !== undefined) {
+            console.log(`📉 Profit Margin Changed to ${profitMargin}%. Recalculating products via SQL...`);
+
+            // Direct SQL Update for Performance (O(1) database op vs O(N) loop)
+            // price_sell = price_provider + (price_provider * (margin / 100))
+            const count = await prisma.$executeRaw`
+                UPDATE "products"
+                SET "price_sell" = CEIL("price_provider" + ("price_provider" * ${Number(profitMargin)} / 100))
+                WHERE "categoryId" = ${id}
+            `;
+
+            console.log(`✅ Updated ${count} products with new margin.`);
+        }
+
+        res.json({ success: true, message: "Category updated successfully", data: category });
+
+    } catch (error: any) {
+        console.error("Update Category Error:", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };

@@ -2,7 +2,7 @@ import * as apigames from './apigames.service.js';
 import * as vip from './vip.service.js';
 import dotenv from 'dotenv';
 dotenv.config();
-const PROVIDER = process.env.GAME_PROVIDER || 'APIGAMES';
+export const PROVIDER = process.env.GAME_PROVIDER || '';
 console.log(`🎮 [GAME SERVICE] Selected Provider: ${PROVIDER}`);
 export const checkProfile = async (gameCode, userId, zoneId) => {
     if (PROVIDER === 'VIP') {
