@@ -194,20 +194,44 @@ export const syncProducts = async (req: Request, res: Response) => {
             where: { isActive: true }
         });
 
-        // Map Category Code/Name to ID for quick lookup
-        // We match Provider 'game' field to Category 'code' OR 'name'
+        // Map Category Code/Name
         const catMap = new Map();
         categories.forEach(c => {
             if (c.code) catMap.set(c.code.toLowerCase(), c);
-            catMap.set(c.name.toLowerCase(), c); // Fallback match by Name
+            catMap.set(c.name.toLowerCase(), c);
         });
+
+        // 🚨 RESET STEP: Mark ALL products as Inactive first.
+        // This ensures that products no longer available from Provider will remain Inactive.
+        console.log('🧹 [SYNC] Resetting all products to Inactive (Smart Sync)...');
+        await prisma.product.updateMany({
+            data: { isActive: false }
+        });
+
+
 
         let totalUpdated = 0;
         let totalCreated = 0;
         let skipped = 0;
+        let processedCount = 0;
+        const totalItems = providerServices.length;
+
+        const io = req.app.get('io'); // Get Socket Instance
 
         // 3. Process Each Service
         for (const item of providerServices) {
+            processedCount++;
+
+            // Emit Progress every 20 items or at 100%
+            if (processedCount % 20 === 0 || processedCount === totalItems) {
+                if (io) {
+                    io.emit('admin_sync_progress', {
+                        current: processedCount,
+                        total: totalItems,
+                        percentage: Math.round((processedCount / totalItems) * 100)
+                    });
+                }
+            }
             // item: { code, name, category (game), price, status }
 
             // Find Matching Category
