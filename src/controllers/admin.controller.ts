@@ -173,56 +173,63 @@ export const getAllProducts = async (req: Request, res: Response) => {
     }
 };
 // POST /api/admin/products/sync
-import * as gameProvider from '../services/game.service.js';
+import * as vipService from '../services/vip.service.js';
 
 export const syncProducts = async (req: Request, res: Response) => {
-    console.log('🔄 [SYNC] Starting Product Sync (VIP/Game Provider)...');
+    console.log('🔄 [SYNC] Starting Product Sync (VIP Direct)...');
 
     try {
-        // 1. Fetch ALL Services from Provider (One Request)
-        const result = await gameProvider.getMerchantServices();
+        // 1. Fetch ALL Services from VIP Provider
+        const result = await vipService.getMerchantServices();
 
         if (!result.success || !Array.isArray(result.data)) {
-            throw new Error(result.message || "Failed to fetch services from provider");
+            throw new Error(result.message || "Failed to fetch services from VIP");
         }
 
         const providerServices = result.data;
-        console.log(`📦 [SYNC] Received ${providerServices.length} services from Provider.`);
+        console.log(`📦 [SYNC] Received ${providerServices.length} services from VIP.`);
 
-        // 2. Get All Active Categories
+        // 2. Get All Active Categories for mapping
         const categories = await prisma.category.findMany({
             where: { isActive: true }
         });
 
-        // Map Category Code/Name
         const catMap = new Map();
         categories.forEach(c => {
             if (c.code) catMap.set(c.code.toLowerCase(), c);
             catMap.set(c.name.toLowerCase(), c);
         });
 
-        // 🚨 RESET STEP: Mark ALL products as Inactive first.
-        // This ensures that products no longer available from Provider will remain Inactive.
-        console.log('🧹 [SYNC] Resetting all products to Inactive (Smart Sync)...');
-        await prisma.product.updateMany({
-            data: { isActive: false }
-        });
+        // 3. Attempt to Clear Database
+        // User requested "kosongkan db" (Empty DB).
+        // This might fail if products are linked to transactions.
+        try {
+            console.log('🗑️ [SYNC] Attempting to delete all existing products...');
+            await prisma.product.deleteMany({});
+            console.log('✅ [SYNC] Database cleared successfully.');
+        } catch (dbError: any) {
+            console.warn('⚠️ [SYNC] Could not clear database (likely due to existing transactions). Proceeding with soft-sync (Update/Insert).');
 
-
+            // Fallback: Mark all as Inactive first so we know what's obsolete
+            await prisma.product.updateMany({
+                data: { isActive: false }
+            });
+        }
 
         let totalUpdated = 0;
         let totalCreated = 0;
+        let totalCategoriesCreated = 0; // Track created categories
         let skipped = 0;
         let processedCount = 0;
         const totalItems = providerServices.length;
 
         const io = req.app.get('io'); // Get Socket Instance
 
-        // 3. Process Each Service
+        // 4. Process Each Service
         for (const item of providerServices) {
             processedCount++;
 
-            // Emit Progress every 20 items or at 100%
+            // Emit Progress
             if (processedCount % 20 === 0 || processedCount === totalItems) {
                 if (io) {
                     io.emit('admin_sync_progress', {
@@ -235,13 +242,37 @@ export const syncProducts = async (req: Request, res: Response) => {
             // item: { code, name, category (game), price, status }
 
             // Find Matching Category
-            const catKey = (item.category || '').toLowerCase();
-            const category = catMap.get(catKey);
+            let catName = (item.category || 'Unknown Game').trim();
+            const catKey = catName.toLowerCase();
+            let category = catMap.get(catKey);
 
+            // Auto-Create Category if missing
             if (!category) {
-                // console.warn(`⚠️ Skipping service '${item.name}' - Category '${item.category}' not found in DB.`);
-                skipped++;
-                continue;
+                try {
+                    // Generate Slug
+                    const slug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+                    category = await prisma.category.create({
+                        data: {
+                            name: catName,
+                            slug: slug + '-' + Math.floor(Math.random() * 1000), // Ensure unique slug
+                            code: slug, // Use slug as code initially
+                            isActive: true, // Auto-active
+                            brand: catName
+                        }
+                    });
+
+                    // Add to Map so we don't create it again for next product
+                    catMap.set(catKey, category);
+                    if (category.code) catMap.set(category.code.toLowerCase(), category);
+
+                    console.log(`✨ [SYNC] Auto-Created Category: ${catName}`);
+                    totalCategoriesCreated++;
+                } catch (catError) {
+                    console.error(`❌ Failed to auto-create category ${catName}:`, catError);
+                    skipped++;
+                    continue; // Skip product if category creation failed
+                }
             }
 
             // Logic: Selling Price
@@ -250,7 +281,7 @@ export const syncProducts = async (req: Request, res: Response) => {
             const rawSellingPrice = providerPrice + (providerPrice * (margin / 100));
             const sellingPrice = Math.ceil(rawSellingPrice);
 
-            // Upsert
+            // Upsert (Works for both Fresh Start and Update scenarios)
             const existing = await prisma.product.findUnique({ where: { sku_code: item.code } });
 
             if (existing) {
@@ -260,7 +291,7 @@ export const syncProducts = async (req: Request, res: Response) => {
                         name: item.name,
                         price_provider: providerPrice,
                         price_sell: sellingPrice,
-                        isActive: item.status,
+                        isActive: item.status !== false, // VIP returns boolean or check
                         updatedAt: new Date()
                     }
                 });
@@ -273,14 +304,14 @@ export const syncProducts = async (req: Request, res: Response) => {
                         price_provider: providerPrice,
                         price_sell: sellingPrice,
                         categoryId: category.id,
-                        isActive: item.status
+                        isActive: item.status !== false
                     }
                 });
                 totalCreated++;
             }
         }
 
-        console.log(`✅ [SYNC] Completed. Updated: ${totalUpdated}, Created: ${totalCreated}, Skipped: ${skipped}`);
+        console.log(`✅ [SYNC] Completed. Updated: ${totalUpdated}, Created: ${totalCreated}, New Categories: ${totalCategoriesCreated}, Skipped: ${skipped}`);
 
         res.json({
             success: true,
@@ -288,6 +319,7 @@ export const syncProducts = async (req: Request, res: Response) => {
             data: {
                 updated: totalUpdated,
                 created: totalCreated,
+                newCategories: totalCategoriesCreated,
                 skipped,
                 total: providerServices.length
             }

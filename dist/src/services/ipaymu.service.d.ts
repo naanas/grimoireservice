@@ -11,6 +11,15 @@ export declare const initPayment: (trxId: string, amount: number, buyerName: str
     message: any;
     data?: never;
 }>;
+export declare const directPayment: (trxId: string, amount: number, buyerName: string, buyerEmail: string, buyerPhone: string, paymentMethod: string, paymentChannel: string) => Promise<{
+    success: boolean;
+    data: any;
+    message?: never;
+} | {
+    success: boolean;
+    message: any;
+    data?: never;
+}>;
 export declare const checkTransaction: (trxId: string) => Promise<{
     success: boolean;
     status: any;

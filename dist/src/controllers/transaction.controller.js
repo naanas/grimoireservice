@@ -23,12 +23,30 @@ export const processGameTopup = async (trxId) => {
         }
         // Prevent double processing if already success (optional safety)
         // if (trx.status === 'SUCCESS' && trx.sn) return { success: true };
-        // 2. Update Status to PROCESSING (if not already)
-        if (trx.status !== 'PROCESSING' && trx.status !== 'SUCCESS') {
-            await prisma.transaction.update({
-                where: { id: trxId },
-                data: { status: 'PROCESSING' }
-            });
+        // 2. Concurrency Lock: Ensure we don't double-hit the provider
+        // We attempt to set providerStatus to 'REQUESTING'. 
+        // If it's already set (REQUESTING, SUCCESS, PROCESSING, etc), we skip.
+        if (trx.providerStatus && trx.providerStatus !== 'FAILED') {
+            console.log(`⚠️ [PROCESS] Provider Status is '${trx.providerStatus}', skipping to avoid race condition.`);
+            return { success: true, message: "Already Requesting/Processed" };
+        }
+        // Lock it
+        const lock = await prisma.transaction.updateMany({
+            where: {
+                id: trxId,
+                OR: [
+                    { providerStatus: null },
+                    { providerStatus: 'FAILED' } // Allow retry if failed previously?
+                ]
+            },
+            data: {
+                status: 'PROCESSING',
+                providerStatus: 'REQUESTING'
+            }
+        });
+        if (lock.count === 0) {
+            console.log(`⚠️ [PROCESS] Locked by another worker. Skipping.`);
+            return { success: true, message: "Locked" };
         }
         // 3. Call VIP Endpoint
         // placeOrder(refId, sku, dest, zoneId)
@@ -81,6 +99,17 @@ export const processGameTopup = async (trxId) => {
     }
     catch (error) {
         console.error(`❌ [PROCESS] System Error: ${error.message}`);
+        // Unlock Provider Status so we can retry later or manual fix
+        try {
+            await prisma.transaction.update({
+                where: { id: trxId },
+                data: {
+                    providerStatus: 'FAILED_SYS: ' + error.message,
+                    status: 'FAILED' // Or keep PROCESSING? Safe to fail.
+                }
+            });
+        }
+        catch (e) { }
         return { success: false, message: error.message };
     }
 };
@@ -325,8 +354,8 @@ export const checkGameId = async (req, res) => {
 // POST /api/transaction/create
 export const createTransaction = async (req, res) => {
     // Validated by Zod Middleware usually
-    const { productId, userId, zoneId, paymentMethod, authUserId, guestContact } = req.body;
-    console.log(`📦 [TRANSACTION] Creating Order: ${productId} for User: ${userId} (Auth: ${authUserId}) via ${paymentMethod} | GuestContact: ${guestContact}`);
+    const { productId, userId, zoneId, paymentMethod, paymentChannel, authUserId, guestContact } = req.body;
+    console.log(`📦 [TRANSACTION] Creating Order: ${productId} for User: ${userId} (Auth: ${authUserId}) via ${paymentMethod}:${paymentChannel || 'Redirect'} | GuestContact: ${guestContact}`);
     try {
         // 1. Get Product Data (With Mock Fallback)
         let product;
@@ -505,24 +534,55 @@ export const createTransaction = async (req, res) => {
             }
             // Init Ipaymu
             const returnPath = `/order/${product.category.slug}`;
-            const payment = await ipaymuService.initPayment(trxId, amount, 'Guest', 'guest@grimoire.com', paymentMethod, returnPath);
+            let payment;
+            if (paymentChannel) {
+                // Direct Payment (Embedded)
+                payment = await ipaymuService.directPayment(trxId, amount, 'Guest', 'guest@grimoire.com', targetPhone || '08123456789', paymentMethod, paymentChannel);
+            }
+            else {
+                // Redirect Payment (Legacy/Fallback)
+                payment = await ipaymuService.initPayment(trxId, amount, 'Guest', 'guest@grimoire.com', paymentMethod, returnPath);
+            }
             if (!payment.success) {
                 return res.status(500).json({ success: false, message: payment.message || 'Payment Error' });
             }
-            // Update with Payment URL
+            // Update with Payment URL or Direct Data
             if (payment.data && !trxId.startsWith('MOCK')) {
+                const updateData = {
+                    paymentTrxId: String(payment.data.TransactionId || payment.data.SessionID)
+                };
+                // Store Redirect URL if available (Direct also returns it sometimes for CC)
+                if (payment.data.Url)
+                    updateData.paymentUrl = payment.data.Url;
+                // Store Direct Payment Info (VA No, Code, etc) to display on Frontend
+                if (payment.data.PaymentNo)
+                    updateData.paymentNo = payment.data.PaymentNo;
+                if (payment.data.PaymentName)
+                    updateData.paymentChannel = payment.data.PaymentName; // e.g. "BCA Virtual Account"
+                // For QRIS Direct, usually returns QrString or QrImage
+                // We might need a field for QrString if we want to render it ourselves
+                // Schema update might be needed if we don't have a place for it.
+                // For now, let's assume `paymentNo` can hold the QR string if it's long enough, 
+                // OR just rely on paymentUrl for QRIS if Direct doesn't give raw string easily?
+                // Direct Payment for QRIS usually gives `QrString` or `QrImage`.
+                // Let's check schema. If needed we can stick it in `paymentNo` or `sn`(abuse?)
+                // Actually `paymentNo` is string?, so it fits.
+                if (payment.data.QrString)
+                    updateData.paymentNo = payment.data.QrString;
                 await prisma.transaction.update({
                     where: { id: trxId },
-                    data: {
-                        paymentUrl: payment.data.Url,
-                        paymentTrxId: payment.data.TransactionId
-                    }
+                    data: updateData
                 });
             }
             // Send WA Invoice
             if (targetPhone) {
                 console.log(`🚀 [WA] Sending Invoice to ${targetPhone}`);
-                const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n📋 *TAGIHAN BARU*\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\n🔗 *Link Pembayaran:*\n${payment.data?.Url}\n---------------------------\nSistem otomatis membatalkan jika tidak dibayar dalam 24 jam.`;
+                // Modify WA message based on type
+                let payLinkOrCode = payment.data?.Url || 'Cek Website';
+                if (paymentChannel) {
+                    payLinkOrCode = `Kode Bayar: *${payment.data.PaymentNo || payment.data.QrString || '-'}*`;
+                }
+                const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n📋 *TAGIHAN BARU*\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\n${payLinkOrCode}\n---------------------------\nSistem otomatis membatalkan jika tidak dibayar dalam 24 jam.`;
                 whatsappService.sendMessage(targetPhone, waMsg).catch(err => console.error("WA Error:", err));
             }
             res.json({
@@ -531,6 +591,9 @@ export const createTransaction = async (req, res) => {
                     id: trxId,
                     invoice,
                     paymentUrl: payment.data?.Url,
+                    paymentNo: payment.data?.PaymentNo || payment.data?.QrString, // Send to Frontend
+                    paymentName: payment.data?.PaymentName || payment.data?.Channel,
+                    expired: payment.data?.Expired,
                     productName: product.name,
                     amount
                 }
@@ -606,6 +669,7 @@ export const handleIpaymuCallback = async (req, res) => {
         console.log('🔔 [WEBHOOK] Ipaymu Callback Received:', req.body);
         const status = req.body.status; // 'berhasil' or 'pending'
         const trxId = req.body.reference_id; // Our Invoice ID / Trx ID
+        const ipaymuTrxId = req.body.trx_id; // iPaymu Transaction ID (Integer)
         const sid = req.body.sid; // Broker ID
         if (!trxId || !sid)
             return res.status(400).json({ success: false, message: "Invalid payload" });
@@ -613,15 +677,16 @@ export const handleIpaymuCallback = async (req, res) => {
         if (!trx)
             return res.status(404).json({ success: false, message: 'Transaction Not Found' });
         // Idempotency Check
-        if (trx.status === 'SUCCESS') {
-            console.log(`⚠️ Transaction ${trxId} already SUCCESS. Ignoring callback.`);
+        if (trx.status === 'SUCCESS' || trx.status === 'PROCESSING') {
+            console.log(`⚠️ Transaction ${trxId} already SUCCESS/PROCESSING. Ignoring callback.`);
             return res.json({ success: true, message: 'Already paid' });
         }
         if (status === 'berhasil') {
             const fee = parseFloat(req.body.fee || '0');
             const totalPaid = parseFloat(req.body.total || req.body.amount || '0');
-            // 1. Double Check with Server (Security)
-            const verification = await ipaymuService.checkTransaction(trxId);
+            // 1. Double Check with Server (Security) using IPAYMU ID
+            // If we use trxId (UUID), verify fails because API expects Integer ID
+            const verification = await ipaymuService.checkTransaction(String(ipaymuTrxId));
             if (!verification.success) {
                 console.warn(`⚠️ [SECURITY] Webhook Verification Failed for ${trxId}. Ignoring.`);
                 return res.status(400).json({ success: false, message: 'Verification Failed' });
@@ -650,6 +715,15 @@ export const handleIpaymuCallback = async (req, res) => {
                     paymentNo: paymentNo
                 }
             });
+            // ⚡ Real-Time Update
+            const io = req.app.get('io');
+            if (io) {
+                console.log(`🔌 [SOCKET] Emitting Update to ${trxId}: ${newStatus}`);
+                io.to(trxId).emit('transaction_update', {
+                    status: newStatus,
+                    transactionId: trxId
+                });
+            }
             // 3. Handle Deposit
             if (trx.type === 'DEPOSIT' && trx.userId) {
                 console.log(`💰 [WALLET] Adding Rp${totalPaid} to User ${trx.userId}`);
@@ -754,11 +828,12 @@ export const checkTransactionStatus = async (req, res) => {
                 const providerStatus = result.data.status;
                 console.log(`🔍 [CHECK-STATUS] Provider Says: ${providerStatus}`);
                 let newStatus = trx.status;
-                // Sync Status Logic with Callback
-                if (providerStatus === 'success') {
+                // Sync Status Logic with Callback (Case Insensitive)
+                const pStatus = String(providerStatus).toLowerCase();
+                if (pStatus === 'success' || pStatus === 'sukses' || pStatus === 'berhasil') {
                     newStatus = 'SUCCESS';
                 }
-                else if (providerStatus === 'error') {
+                else if (pStatus === 'error' || pStatus === 'failed' || pStatus === 'gagal') {
                     newStatus = 'FAILED';
                 }
                 console.log(`🔍 [CHECK-STATUS] Decision: ${trx.status} -> ${newStatus}`);
@@ -772,6 +847,15 @@ export const checkTransactionStatus = async (req, res) => {
                             updatedAt: new Date()
                         }
                     });
+                    // ⚡ Real-Time Update
+                    const io = req.app.get('io');
+                    if (io) {
+                        console.log(`🔌 [SOCKET] Emitting Update to ${id}: ${newStatus}`);
+                        io.to(id).emit('transaction_update', {
+                            status: newStatus,
+                            transactionId: id
+                        });
+                    }
                     // Send WA if Success
                     if (newStatus === 'SUCCESS') {
                         console.log(`📨 [WA] Sending Success Notification via Manual Sync...`);

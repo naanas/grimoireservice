@@ -3,8 +3,8 @@ export const createTransactionSchema = z.object({
     productId: z.string().min(1, 'Product ID is required'),
     userId: z.string().min(1, 'User/Target ID (Game ID) is required'),
     zoneId: z.string().optional(),
-    paymentMethod: z.enum(['BALANCE', 'QRIS', 'VA', 'EWALLET', 'RETAIL', 'Qris', 'CreditCard'], {
-        error: () => ({ message: 'Invalid Payment Method' })
+    paymentMethod: z.enum(['BALANCE', 'QRIS', 'VA', 'EWALLET', 'RETAIL', 'Qris', 'CreditCard', 'va', 'qris', 'cstore', 'ewallet', 'cc', 'cod', 'paylater'], {
+        message: 'Invalid Payment Method'
     }),
     authUserId: z.string().optional(), // Optional, for guest tracking if needed
     guestContact: z.string().optional(), // WhatsApp number for notifications

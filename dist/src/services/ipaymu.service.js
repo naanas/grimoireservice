@@ -112,6 +112,67 @@ export const initPayment = async (trxId, amount, buyerName, buyerEmail, paymentM
         return { success: false, message: error.response?.data?.Message || 'Payment Gateway Connection Error' };
     }
 };
+// --- NEW DIRECT PAYMENT (EMBEDDED) ---
+export const directPayment = async (trxId, amount, buyerName, buyerEmail, buyerPhone, paymentMethod, paymentChannel) => {
+    console.log(`[IPAYMU] Direct Payment: ${trxId} Rp${amount} | Method: ${paymentMethod}:${paymentChannel}`);
+    // Config logic same as initPayment
+    const returnUrl = process.env.NEXT_PUBLIC_FRONTEND_URL || 'http://localhost:3000';
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:4000';
+    const bodyObj = {
+        "name": buyerName || "Guest",
+        "phone": buyerPhone || "08123456789",
+        "email": buyerEmail || "guest@gmail.com",
+        "amount": amount,
+        "notifyUrl": `${backendUrl}/api/callback/ipaymu`,
+        "expired": 24, // 24 hours
+        "expiredType": "hours",
+        "comments": `Order ${trxId}`,
+        "referenceId": trxId,
+        "paymentMethod": paymentMethod,
+        "paymentChannel": paymentChannel,
+        "product": ["Topup Game"],
+        "qty": ["1"],
+        "price": [amount],
+        "weight": ["1"],
+        "width": ["1"],
+        "height": ["1"],
+        "length": ["1"],
+        "deliveryArea": "76111",
+        "deliveryAddress": "Digital Product"
+    };
+    try {
+        const bodyJson = JSON.stringify(bodyObj);
+        // Generate Signature
+        const bodyHash = crypto.createHash('sha256').update(bodyJson).digest('hex').toLowerCase();
+        const stringToSign = `POST:${IPAYMU_VA}:${bodyHash}:${IPAYMU_API_KEY}`;
+        const signature = crypto.createHmac('sha256', IPAYMU_API_KEY).update(stringToSign).digest('hex').toLowerCase();
+        // Send Request to /payment/direct
+        const response = await axios.post(`${IPAYMU_BASE_URL}/payment/direct`, bodyJson, {
+            headers: {
+                'Content-Type': 'application/json',
+                'va': IPAYMU_VA,
+                'signature': signature,
+                'timestamp': new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)
+            }
+        });
+        const resData = response.data;
+        if (resData.Success) {
+            console.log('[IPAYMU] Direct Success:', resData.Data);
+            return {
+                success: true,
+                data: resData.Data // Contains PaymentNo, PaymentName, Expired, QrString, etc.
+            };
+        }
+        else {
+            console.error('[IPAYMU] Direct Failed:', resData);
+            return { success: false, message: resData.Message || 'Payment Generation Failed' };
+        }
+    }
+    catch (error) {
+        console.error('[IPAYMU] Direct HTTP Error:', error.response?.data || error.message);
+        return { success: false, message: error.response?.data?.Message || 'Payment Gateway Error' };
+    }
+};
 // 4. Double Check Transaction (Server-to-Server)
 export const checkTransaction = async (trxId) => {
     console.log(`[IPAYMU] Checking Status for: ${trxId}`);

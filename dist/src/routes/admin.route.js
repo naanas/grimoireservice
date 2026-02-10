@@ -9,5 +9,7 @@ router.get('/transactions', adminController.getAllTransactions);
 router.get('/products', adminController.getAllProducts);
 router.patch('/products/:id/price', adminController.updateProductPrice);
 router.post('/products/sync', adminController.syncProducts);
+router.get('/categories', adminController.getAllCategories);
+router.patch('/categories/:id', adminController.updateCategory);
 export default router;
 //# sourceMappingURL=admin.route.js.map

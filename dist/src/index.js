@@ -6,7 +6,6 @@ import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
 dotenv.config();
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 const app = express();
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 4000;
@@ -17,6 +16,7 @@ const io = new Server(httpServer, {
         allowedHeaders: ['Content-Type', 'Authorization']
     }
 });
+app.set('io', io);
 import transactionRoutes from './routes/transaction.route.js';
 import authRoutes from './routes/auth.route.js';
 import contentRoutes from './routes/content.route.js';
@@ -32,13 +32,7 @@ app.use(cors({
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 1000, // Limit each IP to 1000 requests per windowMs
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-app.use(limiter);
+// app.use(limiter); // Limit removed by request
 app.use(express.json());
 // Ipaymu Callback uses x-www-form-urlencoded
 app.use(express.urlencoded({ extended: true }));

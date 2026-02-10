@@ -4,6 +4,8 @@ export declare const createTransactionSchema: z.ZodObject<{
     userId: z.ZodString;
     zoneId: z.ZodOptional<z.ZodString>;
     paymentMethod: z.ZodEnum<{
+        va: "va";
+        qris: "qris";
         BALANCE: "BALANCE";
         QRIS: "QRIS";
         VA: "VA";
@@ -11,6 +13,11 @@ export declare const createTransactionSchema: z.ZodObject<{
         RETAIL: "RETAIL";
         Qris: "Qris";
         CreditCard: "CreditCard";
+        cstore: "cstore";
+        ewallet: "ewallet";
+        cc: "cc";
+        cod: "cod";
+        paylater: "paylater";
     }>;
     authUserId: z.ZodOptional<z.ZodString>;
     guestContact: z.ZodOptional<z.ZodString>;
