@@ -768,7 +768,7 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
             // Enforce Success check from API (Status 1 or 6 usually means success/paid)
             if (String(verification.status) !== '6' && verification.statusDesc?.toLowerCase() !== 'berhasil') {
                 console.warn(`⚠️ [SECURITY] API says not success yet: ${verification.statusDesc}`);
-                // Proceed with caution or return? For now logged.
+                return res.status(400).json({ success: false, message: 'Verification Status Mismatch' });
             }
 
             // 2. Update Transaction
