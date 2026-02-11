@@ -255,6 +255,21 @@ export const syncProducts = async (req: Request, res: Response) => {
             return group;
         };
 
+        // Helper: Normalize Brand (Group variations into one Game Brand)
+        const normalizeBrand = (name: string): string => {
+            const lower = name.toLowerCase();
+            if (lower.includes("mobile") && lower.includes("legend")) return "Mobile Legends";
+            if (lower.includes("free") && lower.includes("fire")) return "Free Fire";
+            if (lower.includes("pubg")) return "PUBG Mobile";
+            if (lower.includes("genshin")) return "Genshin Impact";
+            if (lower.includes("honkai")) return "Honkai: Star Rail";
+            if (lower.includes("valorant")) return "Valorant";
+            if (lower.includes("cod") || lower.includes("call of duty")) return "Call of Duty Mobile";
+
+            // Default: Use full name, maybe strip common suffixes if generic logic needed
+            return name;
+        };
+
         // 4. Process Each Service
         for (const item of providerServices) {
             processedCount++;
@@ -289,6 +304,7 @@ export const syncProducts = async (req: Request, res: Response) => {
                 try {
                     // Generate Slug
                     const slug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                    const brand = normalizeBrand(catName);
 
                     category = await prisma.category.create({
                         data: {
@@ -296,7 +312,7 @@ export const syncProducts = async (req: Request, res: Response) => {
                             slug: slug + '-' + Math.floor(Math.random() * 1000), // Ensure unique slug
                             code: slug, // Use slug as code initially
                             isActive: true, // Auto-active
-                            brand: catName
+                            brand: brand
                         }
                     });
 
@@ -305,7 +321,7 @@ export const syncProducts = async (req: Request, res: Response) => {
                     if (category.code) catMap.set(category.code.toLowerCase(), category);
                     catMap.set(category.slug.toLowerCase(), category);
 
-                    console.log(`✨ [SYNC] Auto-Created Category: ${catName}`);
+                    console.log(`✨ [SYNC] Auto-Created Category: ${catName} | Brand: ${brand}`);
                     totalCategoriesCreated++;
                 } catch (catError) {
                     console.error(`❌ Failed to auto-create category ${catName}:`, catError);
