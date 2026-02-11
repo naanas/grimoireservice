@@ -198,6 +198,7 @@ export const syncProducts = async (req: Request, res: Response) => {
         categories.forEach(c => {
             if (c.code) catMap.set(c.code.toLowerCase(), c);
             catMap.set(c.name.toLowerCase(), c);
+            catMap.set(c.slug.toLowerCase(), c); // Added slug for robust matching
         });
 
         // 3. Attempt to Clear Database
@@ -225,6 +226,35 @@ export const syncProducts = async (req: Request, res: Response) => {
 
         const io = req.app.get('io'); // Get Socket Instance
 
+        // Helper: Determine Group (Ported from Microservice)
+        const determineGroup = (game: string, name: string): string => {
+            const nameLower = name.toLowerCase();
+            const gameLower = game.toLowerCase();
+
+            let group = game; // Default Group is Game Name
+
+            if (gameLower.includes("mobile") && gameLower.includes("legend")) {
+                if (nameLower.includes("starlight") || nameLower.includes("twilight") || nameLower.includes("pass") || nameLower.includes("weekly")) {
+                    group = "Membership";
+                } else if (nameLower.includes("joki") || nameLower.includes("win") || nameLower.includes("rank")) {
+                    group = "Joki Rank";
+                } else if (nameLower.includes("global") || nameLower.includes("server")) {
+                    if (nameLower.includes("indonesia")) {
+                        group = "Indonesia Server";
+                    } else {
+                        group = "Global Server";
+                    }
+                }
+            } else if (gameLower.includes("free") && gameLower.includes("fire")) {
+                if (nameLower.includes("member") || nameLower.includes("mingguan") || nameLower.includes("bulanan")) {
+                    group = "Membership";
+                } else if (nameLower.includes("level up")) {
+                    group = "Event";
+                }
+            }
+            return group;
+        };
+
         // 4. Process Each Service
         for (const item of providerServices) {
             processedCount++;
@@ -244,7 +274,15 @@ export const syncProducts = async (req: Request, res: Response) => {
             // Find Matching Category
             let catName = (item.category || 'Unknown Game').trim();
             const catKey = catName.toLowerCase();
+
+            // Try matching by Name, Code, or Slug (from map keys)
             let category = catMap.get(catKey);
+
+            // If not found by direct name, try slugifying the name and checking
+            if (!category) {
+                const potentialSlug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                category = catMap.get(potentialSlug);
+            }
 
             // Auto-Create Category if missing
             if (!category) {
@@ -265,6 +303,7 @@ export const syncProducts = async (req: Request, res: Response) => {
                     // Add to Map so we don't create it again for next product
                     catMap.set(catKey, category);
                     if (category.code) catMap.set(category.code.toLowerCase(), category);
+                    catMap.set(category.slug.toLowerCase(), category);
 
                     console.log(`✨ [SYNC] Auto-Created Category: ${catName}`);
                     totalCategoriesCreated++;
@@ -281,6 +320,9 @@ export const syncProducts = async (req: Request, res: Response) => {
             const rawSellingPrice = providerPrice + (providerPrice * (margin / 100));
             const sellingPrice = Math.ceil(rawSellingPrice);
 
+            // Calculate Group
+            const group = determineGroup(catName, item.name);
+
             // Upsert (Works for both Fresh Start and Update scenarios)
             const existing = await prisma.product.findUnique({ where: { sku_code: item.code } });
 
@@ -290,8 +332,14 @@ export const syncProducts = async (req: Request, res: Response) => {
                     data: {
                         name: item.name,
                         price_provider: providerPrice,
+                        // price_sell: sellingPrice, // Optional: Update or keep manual override? 
+                        // Let's update it if it's 0, otherwise maybe respect previous manual edits? 
+                        // User asked "why products wrong", usually implies strict sync.
+                        // But let's stick to update price logic from before:
                         price_sell: sellingPrice,
                         isActive: item.status !== false, // VIP returns boolean or check
+                        categoryId: category.id, // CRITICAL FIX
+                        group: group, // CRITICAL FIX
                         updatedAt: new Date()
                     }
                 });
@@ -304,6 +352,7 @@ export const syncProducts = async (req: Request, res: Response) => {
                         price_provider: providerPrice,
                         price_sell: sellingPrice,
                         categoryId: category.id,
+                        group: group, // CRITICAL FIX
                         isActive: item.status !== false
                     }
                 });
