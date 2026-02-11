@@ -299,6 +299,20 @@ export const syncProducts = async (req: Request, res: Response) => {
                 category = catMap.get(potentialSlug);
             }
 
+            // [NEW] Ensure Existing Category has correct Brand (Self-Healing)
+            if (category) {
+                const correctBrand = normalizeBrand(category.name);
+                if ((category as any).brand !== correctBrand) {
+                    await prisma.category.update({
+                        where: { id: category.id },
+                        data: { brand: correctBrand }
+                    });
+                    // Update local map reference
+                    (category as any).brand = correctBrand;
+                    // console.log(`🔧 [SYNC] Fixed Brand for Category: ${category.name} -> ${correctBrand}`);
+                }
+            }
+
             // Auto-Create Category if missing
             if (!category) {
                 try {

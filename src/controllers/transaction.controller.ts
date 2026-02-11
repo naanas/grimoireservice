@@ -260,9 +260,15 @@ export const getPopularCategories = async (req: Request, res: Response) => {
         // Fallback: If no trending data (new app), return random or all time
         if (result.length === 0) {
             const fallback: any[] = await prisma.$queryRaw`
-                SELECT c.id, c.name, c.slug, c.image, 0 as total_sales
+                SELECT 
+                    MIN(c.id) as id, 
+                    COALESCE(c.brand, c.name) as name, 
+                    MIN(c.slug) as slug, 
+                    MIN(c.image) as image, 
+                    0 as total_sales
                 FROM categories c
                 WHERE c."isActive" = true
+                GROUP BY COALESCE(c.brand, c.name)
                 ORDER BY RANDOM()
                 LIMIT 10
             `;
