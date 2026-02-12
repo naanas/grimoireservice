@@ -1,4 +1,5 @@
 import express from 'express';
+import { logger } from './lib/logger.js';
 import axios from 'axios';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -53,7 +54,7 @@ app.use((req, res, next) => {
     // Skip logging for health checks to reduce noise
     if (req.url === '/api/health') return next();
 
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    logger.info(`${req.method} ${req.url}`);
 
     if (req.body && Object.keys(req.body).length > 0) {
         // Create a shallow copy to avoid mutating the original body
@@ -72,7 +73,7 @@ app.use((req, res, next) => {
         };
 
         maskSensitive(safeBody);
-        console.log('📦 Body:', JSON.stringify(safeBody, null, 2));
+        logger.info(`📦 Body: ${JSON.stringify(safeBody, null, 2)}`);
     }
     next();
 });
@@ -83,14 +84,14 @@ const adminSockets = new Set<string>();
 const userSessions = new Map<string, string>(); // socketId -> sessionId
 
 io.on('connection', (socket) => {
-    console.log(`🔌 Socket Connected: ${socket.id}`);
+    logger.info(`🔌 Socket Connected: ${socket.id}`);
 
     // User/Guest joins their specific session
     socket.on('join_session', (sessionId) => {
         if (!sessionId) return;
         socket.join(sessionId);
         userSessions.set(socket.id, sessionId);
-        console.log(`👤 User joined session: ${sessionId}`);
+        logger.info(`👤 User joined session: ${sessionId}`);
 
         // Notify Admin: User is Online
         io.to('admin_room').emit('user_status', { sessionId, online: true });
@@ -107,7 +108,7 @@ io.on('connection', (socket) => {
             if (decoded && decoded.role === 'ADMIN') {
                 socket.join('admin_room');
                 adminSockets.add(socket.id);
-                console.log(`🛡️ Admin ${decoded.email} joined admin channel`);
+                logger.info(`🛡️ Admin ${decoded.email} joined admin channel`);
 
                 // Notify All Users: Admin is Online
                 // We broadcast to all rooms (or just keep it simple)
@@ -116,7 +117,7 @@ io.on('connection', (socket) => {
                 io.emit('admin_status', { online: true });
             }
         } catch (error) {
-            console.log('⚠️ Admin join failed: Invalid token');
+            logger.warn('Admin join failed: Invalid token');
         }
     });
 
@@ -150,7 +151,7 @@ io.on('connection', (socket) => {
                 });
             }
         } catch (error) {
-            console.error('Message Error:', error);
+            logger.error(`Message Error: ${error}`);
         }
     });
 
@@ -163,7 +164,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        console.log(`❌ Socket Disconnected: ${socket.id}`);
+        logger.info(`❌ Socket Disconnected: ${socket.id}`);
 
         if (adminSockets.has(socket.id)) {
             adminSockets.delete(socket.id);
@@ -216,20 +217,20 @@ const prisma = new PrismaClient();
 const startServer = async () => {
     try {
         // 1. Check Database Connection
-        console.log('🔄 Connecting to Database...');
+        logger.info('Connecting to Database...');
         await prisma.$connect();
-        console.log('✅ Database Connection: SUCCESS');
+        logger.info('Database Connection: SUCCESS');
     } catch (error) {
-        console.error('❌ Database Connection: FAILED');
-        console.error('⚠️  System running in Limited Mode (Mock Data only for Products)');
+        logger.error('Database Connection: FAILED');
+        logger.warn('System running in Limited Mode (Mock Data only for Products)');
     }
 
     // 2. Check Configurations
     const isMock = process.env.MOCK_MODE === 'true';
     if (isMock) {
-        console.log('✅ Game Provider: MOCK MODE (Safe for Dev)');
+        logger.info('Game Provider: MOCK MODE (Safe for Dev)');
     } else {
-        console.log(`⚠️  Game Provider: ${PROVIDER} (REAL API - Careful!)`);
+        logger.warn(`Game Provider: ${PROVIDER} (REAL API - Careful!)`);
     }
 
     // Check Payment Gateway Config (Dynamic)
@@ -237,9 +238,9 @@ const startServer = async () => {
     const activeKey = process.env[`IPAYMU_API_KEY_${paymentEnv}`];
 
     if (activeKey) {
-        console.log(`✅ Payment Gateway: CONNECTED (Ipaymu ${paymentEnv} Environment)`);
+        logger.info(`Payment Gateway: CONNECTED (Ipaymu ${paymentEnv} Environment)`);
     } else {
-        console.warn(`❌ Payment Gateway: MISSING API KEY for ${paymentEnv} environment! Check .env`);
+        logger.warn(`Payment Gateway: MISSING API KEY for ${paymentEnv} environment! Check .env`);
     }
 
     // 3. Start Keep-Alive System (Wake Java Service)
@@ -254,13 +255,13 @@ const startServer = async () => {
                 // If URL is "https://app.render.com/api/send", we want "https://app.render.com/" usually, 
                 // but pining the endpoint endpoint with GET (even if it expects POST) is usually enough to wake it (404/405 is fine).
                 // Safest is to just hit the URL provided.
-                console.log(`⏰ [KEEP-ALIVE] Pinging Java Service...`);
+                logger.info(`[KEEP-ALIVE] Pinging Java Service...`);
                 await axios.get(JAVA_SERVICE_URL, { timeout: 5000 }).catch(e => {
                     // Ignore errors, we just want to wake it up. 
                     // 404/405/400 are Good signs (it's alive).
                     // Network Error/Timeout means it might be down or waking up.
-                    if (e.response) console.log(`⏰ [KEEP-ALIVE] Java Service is Awake (Status: ${e.response.status})`);
-                    else console.log(`⏰ [KEEP-ALIVE] Ping sent (No response/waking up)`);
+                    if (e.response) logger.info(`[KEEP-ALIVE] Java Service is Awake (Status: ${e.response.status})`);
+                    else logger.info(`[KEEP-ALIVE] Ping sent (No response/waking up)`);
                 });
             } catch (e) {
                 // silent
@@ -270,7 +271,7 @@ const startServer = async () => {
 
     // Use httpServer instead of app.listen
     httpServer.listen(PORT, () => {
-        console.log(`🚀 Server running on port ${PORT} (with Socket.IO)`);
+        logger.info(`Server running on port ${PORT} (with Socket.IO)`);
     });
 };
 
