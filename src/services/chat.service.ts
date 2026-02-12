@@ -113,6 +113,12 @@ export const ChatService = {
     },
 
     async addMessage(sessionId: string, sender: Role, content: string) {
+        // Update session's updatedAt timestamp to keep it alive
+        await prisma.chatSession.update({
+            where: { id: sessionId },
+            data: { updatedAt: new Date() }
+        });
+
         return await prisma.chatMessage.create({
             data: {
                 sessionId,

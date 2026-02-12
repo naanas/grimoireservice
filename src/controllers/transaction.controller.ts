@@ -445,6 +445,41 @@ export const createTransaction = async (req: Request, res: Response) => {
 
         const finalAmount = amount - discountAmount;
 
+        // --- GATEWAY FEE CALCULATION ---
+        // Calculate fee based on payment method to ensure backend amount matches frontend display
+        // Rates should match PaymentChannels.ts
+        let adminFee = 0;
+
+        // Helper to match logic
+        const getFee = (method: string, channel: string | undefined, price: number) => {
+            // QRIS (0.7%)
+            if (method === 'QRIS' || (method === 'qris' && (!channel || channel === 'qris'))) {
+                return Math.floor(price * 0.007);
+            }
+            // Virtual Account (Flat ~4000-4500)
+            if (method === 'VA' || method === 'va') {
+                if (channel?.includes('mandiri')) return 4000;
+                if (channel?.includes('bri')) return 3500;
+                return 4500; // BCA, BNI, CIMB, Permata default
+            }
+            // E-Wallet (~1.5% - 2.0%)
+            if (method === 'EWALLET' || method === 'ewallet') {
+                if (channel?.includes('shopeepay')) return Math.floor(price * 0.02);
+                return Math.floor(price * 0.015); // DANA, OVO, LinkAja
+            }
+            // Retail (Flat ~3500)
+            if (method === 'CSTORE' || method === 'cstore') {
+                return 3500;
+            }
+            return 0;
+        };
+
+        if (paymentMethod !== 'BALANCE') {
+            adminFee = getFee(paymentMethod, paymentChannel, finalAmount);
+        }
+
+        const totalPayable = finalAmount + adminFee;
+
         // 3. Handle Payment Method
         if (paymentMethod === 'BALANCE') {
             // A. BALANCE PAYMENT (SECURE)
@@ -573,8 +608,9 @@ export const createTransaction = async (req: Request, res: Response) => {
                         productId,
                         targetId: userId,
                         zoneId,
-                        amount,
+                        amount: totalPayable, // Store TOTAL including fee
                         discountAmount,
+                        adminFee: adminFee, // Store Fee separately for records
                         voucherCode: validVoucherCode,
                         status: 'PENDING',
                         paymentMethod,
@@ -595,7 +631,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                 // Direct Payment (Embedded)
                 payment = await ipaymuService.directPayment(
                     trxId,
-                    amount,
+                    totalPayable, // Send Total
                     'Guest',
                     'guest@grimoire.com',
                     targetPhone || '08123456789',
@@ -604,7 +640,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                 );
             } else {
                 // Redirect Payment (Legacy/Fallback)
-                payment = await ipaymuService.initPayment(trxId, amount, 'Guest', 'guest@grimoire.com', paymentMethod, returnPath);
+                payment = await ipaymuService.initPayment(trxId, totalPayable, 'Guest', 'guest@grimoire.com', paymentMethod, returnPath);
             }
 
             if (!payment.success) {
@@ -663,7 +699,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                     paymentName: payment.data?.PaymentName || payment.data?.Channel,
                     expired: payment.data?.Expired,
                     productName: product.name,
-                    amount
+                    amount: totalPayable
                 }
             });
         }
