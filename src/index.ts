@@ -265,7 +265,7 @@ const startServer = async () => {
             } catch (e) {
                 // silent
             }
-        }, 600000);
+        }, 100000);
     }
 
     // Use httpServer instead of app.listen
