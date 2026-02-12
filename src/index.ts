@@ -1,4 +1,5 @@
 import express from 'express';
+import axios from 'axios';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
@@ -239,6 +240,32 @@ const startServer = async () => {
         console.log(`✅ Payment Gateway: CONNECTED (Ipaymu ${paymentEnv} Environment)`);
     } else {
         console.warn(`❌ Payment Gateway: MISSING API KEY for ${paymentEnv} environment! Check .env`);
+    }
+
+    // 3. Start Keep-Alive System (Wake Java Service)
+    const JAVA_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL;
+    if (JAVA_SERVICE_URL) {
+        console.log(`⏰ [KEEP-ALIVE] Auto-Wake system active for: ${JAVA_SERVICE_URL}`);
+
+        // Run every 10 minutes (600,000 ms)
+        setInterval(async () => {
+            try {
+                // Extract Base URL (assuming service URL might have path)
+                // If URL is "https://app.render.com/api/send", we want "https://app.render.com/" usually, 
+                // but pining the endpoint endpoint with GET (even if it expects POST) is usually enough to wake it (404/405 is fine).
+                // Safest is to just hit the URL provided.
+                console.log(`⏰ [KEEP-ALIVE] Pinging Java Service...`);
+                await axios.get(JAVA_SERVICE_URL, { timeout: 5000 }).catch(e => {
+                    // Ignore errors, we just want to wake it up. 
+                    // 404/405/400 are Good signs (it's alive).
+                    // Network Error/Timeout means it might be down or waking up.
+                    if (e.response) console.log(`⏰ [KEEP-ALIVE] Java Service is Awake (Status: ${e.response.status})`);
+                    else console.log(`⏰ [KEEP-ALIVE] Ping sent (No response/waking up)`);
+                });
+            } catch (e) {
+                // silent
+            }
+        }, 600000);
     }
 
     // Use httpServer instead of app.listen
