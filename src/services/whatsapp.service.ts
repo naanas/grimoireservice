@@ -21,7 +21,7 @@ export const sendMessage = async (target: string, message: string) => {
         const response = await axios.post(NOTIFICATION_SERVICE_URL, {
             target: target,
             message: message
-        });
+        }, { timeout: 5000 });
 
         console.log(`✅ [WA Service] Success! Response from Java:`, response.data);
         return { success: true, data: response.data };
