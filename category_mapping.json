@@ -1,0 +1,1642 @@
+[
+  {
+    "id": "de3c2707-dfc9-49ad-b2e5-8bdb6d4241cb",
+    "name": "Arena Breakout",
+    "slug": "arena-breakout",
+    "code": "Arena Breakout",
+    "brand": "Arena Breakout"
+  },
+  {
+    "id": "b195f639-d922-4de6-9263-36c1947b8be1",
+    "name": "Arena Breakout: Infinite (PC)",
+    "slug": "arena-breakout-infinite-pc",
+    "code": "Arena Breakout: Infinite (PC)",
+    "brand": "Arena Breakout: Infinite (PC)"
+  },
+  {
+    "id": "1475305d-2adf-40f1-acbb-42ab15e0758f",
+    "name": "Blood Strike",
+    "slug": "blood-strike",
+    "code": "Blood Strike"
+  },
+  {
+    "id": "b149285b-611f-41dc-888d-176c3193a024",
+    "name": "Call of Duty MOBILE",
+    "slug": "call-of-duty-mobile",
+    "code": "call-of-duty-mobile",
+    "brand": "Call of Duty"
+  },
+  {
+    "id": "9bb3a527-9ff5-4d00-849b-128d25fca7ea",
+    "name": "Mobile Legends (Brazil)",
+    "slug": "mobile-legends-brazil",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends"
+  },
+  {
+    "id": "8c717ddd-feab-4588-a13e-679cde41c80f",
+    "name": "Marvel Rivals",
+    "slug": "marvel-rivals",
+    "code": "Marvel Rivals",
+    "brand": "Marvel"
+  },
+  {
+    "id": "6d135dd4-2e1a-40b7-ba81-4981e50ea2d6",
+    "name": "Marvel Super War",
+    "slug": "marvel-super-war",
+    "code": "marvel-super-war",
+    "brand": "Marvel"
+  },
+  {
+    "id": "83e31399-6fd3-4b24-ae6c-187a9b1bc919",
+    "name": "Free Fire Global",
+    "slug": "free-fire-global",
+    "code": "free-fire",
+    "brand": "Free Fire"
+  },
+  {
+    "id": "63a9062c-285b-4444-be56-dbcba9b23786",
+    "name": "Free Fire Max",
+    "slug": "free-fire-max",
+    "code": "free-fire-max",
+    "brand": "Free Fire"
+  },
+  {
+    "id": "a842bef1-bb9f-4b5f-b284-9800d8f2d6be",
+    "name": "Free Fire Max Global",
+    "slug": "free-fire-max-global",
+    "code": "free-fire-max",
+    "brand": "Free Fire"
+  },
+  {
+    "id": "53ca8889-7b9e-458b-84fa-c756ecb3ed6a",
+    "name": "Call of Duty Mobile (Indonesia)",
+    "slug": "call-of-duty-mobile-indonesia",
+    "code": "call-of-duty-mobile",
+    "brand": "Call of Duty"
+  },
+  {
+    "id": "b6106914-c59b-4b46-93d4-0d0150c24d37",
+    "name": "Sausage Man",
+    "slug": "sausage-man",
+    "code": "Sausage Man"
+  },
+  {
+    "id": "c21b1597-5b06-4093-b8d2-38e294ebfbe0",
+    "name": "Super Sus",
+    "slug": "super-sus",
+    "code": "Super Sus"
+  },
+  {
+    "id": "198b074d-5b81-4532-b6f7-76b640e79f01",
+    "name": "Free Fire",
+    "slug": "free-fire",
+    "code": "free-fire",
+    "brand": "Free Fire"
+  },
+  {
+    "id": "baa8c93a-c101-417e-802f-0a2b6c6790f2",
+    "name": "Delta Force",
+    "slug": "delta-force",
+    "code": "Delta Force"
+  },
+  {
+    "id": "ce18c0b9-a942-4dff-bf70-e37f2c4c7624",
+    "name": "Farlight 84",
+    "slug": "farlight-84",
+    "code": "Farlight 84"
+  },
+  {
+    "id": "321e7eec-c812-4815-b88a-747a97d8b6c5",
+    "name": "Magic Chess: Go Go",
+    "slug": "magic-chess-go-go",
+    "code": "Magic Chess: Go Go",
+    "brand": "Magic Chess"
+  },
+  {
+    "id": "a91eafd2-685d-4eff-863f-8e333c35d4aa",
+    "name": "Magic Chess: Go Go (Global)",
+    "slug": "magic-chess-go-go-global",
+    "code": "Magic Chess: Go Go",
+    "brand": "Magic Chess"
+  },
+  {
+    "id": "2c3ae076-89f3-4dbd-b3da-0a91abdcdb69",
+    "name": "Marvel Duel",
+    "slug": "marvel-duel",
+    "code": "Marvel Duel",
+    "brand": "Marvel"
+  },
+  {
+    "id": "8d73cd49-ec0a-4fac-9066-7d1fa5fc34e3",
+    "name": "PUBG : New State Mobile",
+    "slug": "pubg-new-state-mobile",
+    "code": "PUBG : New State Mobile",
+    "brand": "PUBG"
+  },
+  {
+    "id": "42700468-f03e-4e3d-95f6-510cac8cb086",
+    "name": "PUBG Mobile (GLOBAL)",
+    "slug": "pubg-mobile-global",
+    "code": "pubg-mobile-global",
+    "brand": "PUBG"
+  },
+  {
+    "id": "1a4cd91c-2943-4bd7-b150-6efa32b0803e",
+    "name": "PUBG Mobile (ID)",
+    "slug": "pubg-mobile-id",
+    "code": "PUBG Mobile (ID)",
+    "brand": "PUBG"
+  },
+  {
+    "id": "2e8f164b-4844-4cdf-af54-187e3b178f32",
+    "name": "ChatGPT",
+    "slug": "chatgpt-965",
+    "code": "chatgpt",
+    "brand": "ChatGPT"
+  },
+  {
+    "id": "a7f8cb3e-0272-4626-ae6c-f79d4b5d100e",
+    "name": "Voucher PSN",
+    "slug": "voucher-psn-980",
+    "code": "voucher-psn",
+    "brand": "Voucher PSN"
+  },
+  {
+    "id": "c2892a05-c9d7-4517-9360-3496dbbc73ab",
+    "name": "AFK Journey",
+    "slug": "afk-journey-38",
+    "code": "afk-journey",
+    "brand": "AFK Journey"
+  },
+  {
+    "id": "0385b11b-eea6-4332-9546-19b3bb2c329d",
+    "name": "Age of Empires Mobile",
+    "slug": "age-of-empires-mobile-614",
+    "code": "age-of-empires-mobile",
+    "brand": "Age of Empires Mobile"
+  },
+  {
+    "id": "22bbd9a9-6af1-4a45-8f88-d3c283c2a43c",
+    "name": "Alight Motion",
+    "slug": "alight-motion-783",
+    "code": "alight-motion",
+    "brand": "Alight Motion"
+  },
+  {
+    "id": "7733d5bf-f81e-4dd3-9b3b-0b64174b158a",
+    "name": "Amazon Prime Video",
+    "slug": "amazon-prime-video-998",
+    "code": "amazon-prime-video",
+    "brand": "Amazon Prime Video"
+  },
+  {
+    "id": "09b907d6-ad48-4760-b465-3a6997bb0dc7",
+    "name": "Arena Breakout",
+    "slug": "arena-breakout-600",
+    "code": "arena-breakout",
+    "brand": "Arena Breakout"
+  },
+  {
+    "id": "cb804aa3-0cff-4c81-bf35-66f483e774c0",
+    "name": "Arena of Valor",
+    "slug": "arena-of-valor-522",
+    "code": "arena-of-valor",
+    "brand": "Arena of Valor"
+  },
+  {
+    "id": "c401c995-7c7c-4b9b-8f92-17e10f1dbeef",
+    "name": "Astral Guardians: Cyber Fantasy",
+    "slug": "astral-guardians-cyber-fantasy-852",
+    "code": "astral-guardians-cyber-fantasy",
+    "brand": "Astral Guardians: Cyber Fantasy"
+  },
+  {
+    "id": "82a80bc4-4d8d-474e-8a7b-3827b9666c83",
+    "name": "Be The King",
+    "slug": "be-the-king-568",
+    "code": "be-the-king",
+    "brand": "Be The King"
+  },
+  {
+    "id": "e2ea4366-ac65-40a9-bbdb-3fd1b66085c9",
+    "name": "Blood Strike",
+    "slug": "blood-strike-737",
+    "code": "blood-strike",
+    "brand": "Blood Strike"
+  },
+  {
+    "id": "a540de70-032a-4e21-8181-16bea98a5a86",
+    "name": "Bstation Premium",
+    "slug": "bstation-premium-63",
+    "code": "bstation-premium",
+    "brand": "Bstation Premium"
+  },
+  {
+    "id": "0e851984-37b6-4fe1-92ce-1b4638327c36",
+    "name": "Call Of Duty Mobile (Indonesia)",
+    "slug": "call-of-duty-mobile-indonesia-542",
+    "code": "call-of-duty-mobile-indonesia",
+    "brand": "Call Of Duty Mobile (Indonesia)"
+  },
+  {
+    "id": "411535ae-ce62-430c-bf0a-1122af4ff7bb",
+    "name": "Canva Pro",
+    "slug": "canva-pro-382",
+    "code": "canva-pro",
+    "brand": "Canva Pro"
+  },
+  {
+    "id": "757bece6-a0d9-4030-81a1-68fd57ebdaa3",
+    "name": "CapCut Pro",
+    "slug": "capcut-pro-819",
+    "code": "capcut-pro",
+    "brand": "CapCut Pro"
+  },
+  {
+    "id": "1bb14364-69c9-4154-bdc2-526b83a5c55e",
+    "name": "Castle Duels",
+    "slug": "castle-duels-770",
+    "code": "castle-duels",
+    "brand": "Castle Duels"
+  },
+  {
+    "id": "3a93f02e-36c5-46e1-9a6b-e16c11a18f2b",
+    "name": "Garena Undawn",
+    "slug": "garena-undawn-210",
+    "code": "garena-undawn",
+    "brand": "Garena Undawn"
+  },
+  {
+    "id": "8d7b7236-f296-4a47-8e5c-adb0a9f69132",
+    "name": "Voucher Razer Gold",
+    "slug": "voucher-razer-gold-94",
+    "code": "voucher-razer-gold",
+    "brand": "Voucher Razer Gold"
+  },
+  {
+    "id": "03eef819-b970-4f35-b884-17220e1cacb7",
+    "name": "Warp Plus",
+    "slug": "warp-plus-293",
+    "code": "warp-plus",
+    "brand": "Warp Plus"
+  },
+  {
+    "id": "afb8642e-0936-4a0c-a12d-357b2a5a443b",
+    "name": "Mobile Legends (Global)",
+    "slug": "mobile-legends-global",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends"
+  },
+  {
+    "id": "d500242c-d5b2-45e5-ab65-38a855c10001",
+    "name": "Mobile Legends (Malaysia)",
+    "slug": "mobile-legends-malaysia",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends"
+  },
+  {
+    "id": "8d71963d-1bfa-40a8-a5c3-b89d2bf5daed",
+    "name": "Mobile Legends (Russia)",
+    "slug": "mobile-legends-russia",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends"
+  },
+  {
+    "id": "152a1c6d-9de8-4245-8e7c-bb10210d469e",
+    "name": "Watcher Of Realms",
+    "slug": "watcher-of-realms-704",
+    "code": "watcher-of-realms",
+    "brand": "Watcher Of Realms"
+  },
+  {
+    "id": "71874278-4ef2-46d6-864f-b72611fa53dc",
+    "name": "Age of Empires Mobile",
+    "slug": "age-of-empires-mobile",
+    "code": "Age of Empires Mobile",
+    "brand": "Age of Empires Mobile"
+  },
+  {
+    "id": "33992ad7-6056-410b-86d2-c4e9c3eaa3c8",
+    "name": "WeTV Premium",
+    "slug": "wetv-premium-453",
+    "code": "wetv-premium",
+    "brand": "WeTV Premium"
+  },
+  {
+    "id": "d428db25-e8a0-4e2c-b881-d9315485da36",
+    "name": "Castle Duels",
+    "slug": "castle-duels",
+    "code": "Castle Duels",
+    "brand": "Castle Duels"
+  },
+  {
+    "id": "79428106-c19d-4ddc-b20e-b8b64e2dbfa6",
+    "name": "Whiteout Survival",
+    "slug": "whiteout-survival-23",
+    "code": "whiteout-survival",
+    "brand": "Whiteout Survival"
+  },
+  {
+    "id": "ff701191-348e-4d2c-a87f-35d2e61e4a5d",
+    "name": "Conquer Online (Point Card)",
+    "slug": "conquer-online-point-card",
+    "code": "Conquer Online (Point Card)",
+    "brand": "Conquer Online (Point Card)"
+  },
+  {
+    "id": "7ac27160-979b-4549-87b7-6aa986e02a47",
+    "name": "Dynasty Warriors: Overlords",
+    "slug": "dynasty-warriors-overlords",
+    "code": "Dynasty Warriors: Overlords",
+    "brand": "Dynasty Warriors: Overlords"
+  },
+  {
+    "id": "9d48c32c-536c-4220-a47c-49afd89bbbba",
+    "name": "King of Avalon",
+    "slug": "king-of-avalon",
+    "code": "King of Avalon",
+    "brand": "King of Avalon"
+  },
+  {
+    "id": "e13aafe7-7b82-4c51-9aec-6aadeb8311d6",
+    "name": "King Of Avalon",
+    "slug": "king-of-avalon-duplicate",
+    "code": "King Of Avalon",
+    "brand": "King of Avalon"
+  },
+  {
+    "id": "67bb1ad1-05ac-4052-8972-77e348fc9b78",
+    "name": "Mobile Legends",
+    "slug": "mobile-legends",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends"
+  },
+  {
+    "id": "80b96e0f-087c-4f00-863b-7e1a1376d83a",
+    "name": "State of Survival: Zombie War",
+    "slug": "state-of-survival-zombie-war",
+    "code": "State of Survival: Zombie War",
+    "brand": "State of Survival: Zombie War"
+  },
+  {
+    "id": "c0b3a120-0c73-4692-b414-03271f0c37e3",
+    "name": "Youtube Premium",
+    "slug": "youtube-premium-609",
+    "code": "youtube-premium",
+    "brand": "Youtube Premium"
+  },
+  {
+    "id": "e48503a4-4e04-4ad0-a2bf-e25e0404ef8a",
+    "name": "Zenless Zone Zero (ZZZ)",
+    "slug": "zenless-zone-zero-zzz-722",
+    "code": "zenless-zone-zero-zzz",
+    "brand": "Zenless Zone Zero (ZZZ)"
+  },
+  {
+    "id": "baacdf18-eda6-4e55-8b77-3ae3b44a2a10",
+    "name": "Zepeto",
+    "slug": "zepeto-334",
+    "code": "zepeto",
+    "brand": "Zepeto"
+  },
+  {
+    "id": "c2d3e37d-aa5c-4f92-bc68-44f5f4353f62",
+    "name": "Conquer Online (Point Card)",
+    "slug": "conquer-online-point-card-678",
+    "code": "conquer-online-point-card",
+    "brand": "Conquer Online (Point Card)"
+  },
+  {
+    "id": "029fe409-bafb-42aa-9f58-0fb13198c41f",
+    "name": "Delta Force",
+    "slug": "delta-force-19",
+    "code": "delta-force",
+    "brand": "Delta Force"
+  },
+  {
+    "id": "d7f7c655-7fb7-45a9-aad4-72f8407ab941",
+    "name": "Dragonheir Silent Gods",
+    "slug": "dragonheir-silent-gods-674",
+    "code": "dragonheir-silent-gods",
+    "brand": "Dragonheir Silent Gods"
+  },
+  {
+    "id": "b3306898-1ecd-4bc7-9c77-a45756b7c4cd",
+    "name": "Dragon Raja",
+    "slug": "dragon-raja-595",
+    "code": "dragon-raja",
+    "brand": "Dragon Raja"
+  },
+  {
+    "id": "ba7317da-e64a-4103-8312-df76a9adce44",
+    "name": "Dynasty Warriors: Overlords",
+    "slug": "dynasty-warriors-overlords-601",
+    "code": "dynasty-warriors-overlords",
+    "brand": "Dynasty Warriors: Overlords"
+  },
+  {
+    "id": "479745f7-ad3a-409b-be51-b6d5e5a5bda4",
+    "name": "EA SPORTS FC Mobile",
+    "slug": "ea-sports-fc-mobile-700",
+    "code": "ea-sports-fc-mobile",
+    "brand": "EA SPORTS FC Mobile"
+  },
+  {
+    "id": "39b0130c-a4ba-4b5a-a340-a46ac7c279c4",
+    "name": "Eggy Party",
+    "slug": "eggy-party-37",
+    "code": "eggy-party",
+    "brand": "Eggy Party"
+  },
+  {
+    "id": "be62a6fb-4e89-49ae-8501-86ea43b0dff1",
+    "name": "Farlight 84",
+    "slug": "farlight-84-6",
+    "code": "farlight-84",
+    "brand": "Farlight 84"
+  },
+  {
+    "id": "2b0fbf94-83ec-42f2-adfc-1db855d57e21",
+    "name": "Football Master 2",
+    "slug": "football-master-2-276",
+    "code": "football-master-2",
+    "brand": "Football Master 2"
+  },
+  {
+    "id": "c9004206-ec6f-496e-bc7f-287f36d173a8",
+    "name": "Dragonheir Silent Gods",
+    "slug": "dragonheir-silent-gods-577",
+    "code": "dragonheir-silent-gods",
+    "brand": "Dragonheir Silent Gods"
+  },
+  {
+    "id": "90c02489-cc5e-4e8b-82c2-36cbb5633eb9",
+    "name": "EA SPORTS FC Mobile",
+    "slug": "ea-sports-fc-mobile-948",
+    "code": "ea-sports-fc-mobile",
+    "brand": "EA SPORTS FC Mobile"
+  },
+  {
+    "id": "8d518c2b-14f9-4b66-b669-7404e41c34f8",
+    "name": "Eggy Party",
+    "slug": "eggy-party-411",
+    "code": "eggy-party",
+    "brand": "Eggy Party"
+  },
+  {
+    "id": "259ea1b3-3165-4bbc-88c3-94441525ae64",
+    "name": "Farlight 84",
+    "slug": "farlight-84-438",
+    "code": "farlight-84",
+    "brand": "Farlight 84"
+  },
+  {
+    "id": "80c936c8-89ef-4afa-b2dc-1f34f3556505",
+    "name": "Football Master 2",
+    "slug": "football-master-2-549",
+    "code": "football-master-2",
+    "brand": "Football Master 2"
+  },
+  {
+    "id": "a5e21b52-59ed-4936-933f-4b9eca6898af",
+    "name": "Growtopia",
+    "slug": "growtopia-786",
+    "code": "growtopia",
+    "brand": "Growtopia"
+  },
+  {
+    "id": "3b6ebbd3-3180-4dde-87fc-4082a65f04f9",
+    "name": "Honkai Impact 3",
+    "slug": "honkai-impact-3-439",
+    "code": "honkai-impact-3",
+    "brand": "Honkai Impact 3"
+  },
+  {
+    "id": "6021b5da-c91c-400c-8442-42fd42b70f53",
+    "name": "Honkai Star Rail",
+    "slug": "honkai-star-rail-297",
+    "code": "honkai-star-rail",
+    "brand": "Honkai Star Rail"
+  },
+  {
+    "id": "f9c6a0dd-5144-4385-b38c-df23cd3e8259",
+    "name": "Honor of Kings Global",
+    "slug": "honor-of-kings-global-552",
+    "code": "honor-of-kings-global",
+    "brand": "Honor of Kings Global"
+  },
+  {
+    "id": "68f57370-c888-40b6-906a-91d5b9d93b22",
+    "name": "Identity V",
+    "slug": "identity-v-404",
+    "code": "identity-v",
+    "brand": "Identity V"
+  },
+  {
+    "id": "0982d547-021a-4984-958a-8b70f5229a4e",
+    "name": "Infinite Borders",
+    "slug": "infinite-borders-925",
+    "code": "infinite-borders",
+    "brand": "Infinite Borders"
+  },
+  {
+    "id": "c8395afa-26a2-4871-aa56-10e1aefcf5ba",
+    "name": "iQIYI Premium",
+    "slug": "iqiyi-premium-175",
+    "code": "iqiyi-premium",
+    "brand": "iQIYI Premium"
+  },
+  {
+    "id": "5ca90bca-905e-4375-8372-2fdd3d8dd43d",
+    "name": "Mobile Legends (Philippines)",
+    "slug": "mobile-legends-philippines",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends"
+  },
+  {
+    "id": "36fc838e-134a-41e6-ad64-6e2b234f7900",
+    "name": "Arena of Valor",
+    "slug": "arena-of-valor",
+    "code": "Arena of Valor",
+    "brand": "Arena of Valor"
+  },
+  {
+    "id": "f5d5d56c-99f4-421d-ae70-ed3668860656",
+    "name": "Gemini",
+    "slug": "gemini-71",
+    "code": "gemini",
+    "brand": "Gemini"
+  },
+  {
+    "id": "2e4213a4-03af-43bb-a6f0-dbfd55d808d8",
+    "name": "Auto Chess",
+    "slug": "auto-chess",
+    "code": "Auto Chess",
+    "brand": "Auto Chess"
+  },
+  {
+    "id": "c8c97da3-46e4-4233-b646-9da206fb55d9",
+    "name": "Mobile Legends (Singapore)",
+    "slug": "mobile-legends-singapore",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends"
+  },
+  {
+    "id": "9e1a4f1d-9291-4029-80a1-b3356071d97e",
+    "name": "Genshin Impact",
+    "slug": "genshin-impact-699",
+    "code": "genshin-impact",
+    "brand": "Genshin Impact"
+  },
+  {
+    "id": "0e70e905-7590-4f6b-afc1-571dd6bb3fed",
+    "name": "Brawl Stars",
+    "slug": "brawl-stars",
+    "code": "Brawl Stars",
+    "brand": "Brawl Stars"
+  },
+  {
+    "id": "19158624-2ce8-49d9-860d-90b60c642323",
+    "name": "Clash of Clans",
+    "slug": "clash-of-clans",
+    "code": "Clash of Clans",
+    "brand": "Clash of Clans"
+  },
+  {
+    "id": "378afe3e-ccf8-4523-820f-9da9785a3784",
+    "name": "Clash Royale",
+    "slug": "clash-royale",
+    "code": "Clash Royale",
+    "brand": "Clash Royale"
+  },
+  {
+    "id": "2f8febf2-a262-43e1-a89e-4499e9d0a1a5",
+    "name": "Growtopia",
+    "slug": "growtopia-859",
+    "code": "growtopia",
+    "brand": "Growtopia"
+  },
+  {
+    "id": "7e0b0c2f-1aa7-4c1b-9618-a4c04a8f9f29",
+    "name": "Hago",
+    "slug": "hago",
+    "code": "Hago",
+    "brand": "Hago"
+  },
+  {
+    "id": "4cf83e26-7394-4f1e-a5ff-479941a12cb2",
+    "name": "Honkai Impact 3",
+    "slug": "honkai-impact-3",
+    "code": "Honkai Impact 3",
+    "brand": "Honkai"
+  },
+  {
+    "id": "9b347e85-05ee-4a78-8ce0-b7a705e537c5",
+    "name": "Honkai Star Rail",
+    "slug": "honkai-star-rail",
+    "code": "Honkai Star Rail",
+    "brand": "Honkai"
+  },
+  {
+    "id": "4543b9f2-d3d3-4a50-8346-099a93085829",
+    "name": "Honor of Kings Global",
+    "slug": "honor-of-kings-global",
+    "code": "Honor of Kings Global",
+    "brand": "Honor of Kings Global"
+  },
+  {
+    "id": "e2ce80e1-b592-4d62-8846-3a8f2ec94c50",
+    "name": "Lords Mobile",
+    "slug": "lords-mobile",
+    "code": "Lords Mobile",
+    "brand": "Lords Mobile"
+  },
+  {
+    "id": "c2ceeadb-90d2-41a6-ac2f-81fcbf1302c0",
+    "name": "Metal Slug Awakening",
+    "slug": "metal-slug-awakening",
+    "code": "Metal Slug Awakening",
+    "brand": "Metal Slug Awakening"
+  },
+  {
+    "id": "fdd2b7f5-4b1f-4a46-bb30-17454afa2f3b",
+    "name": "Point Blank",
+    "slug": "point-blank",
+    "code": "Point Blank",
+    "brand": "Point Blank"
+  },
+  {
+    "id": "f6b919ee-26c1-4eac-84b1-94a5e2478a6e",
+    "name": "Tom and Jerry Chase",
+    "slug": "tom-and-jerry-chase-var",
+    "code": "Tom and Jerry Chase",
+    "brand": "Tom and Jerry"
+  },
+  {
+    "id": "df15c7f3-60a2-453a-bfd0-bfdff3d75743",
+    "name": "Valorant",
+    "slug": "valorant",
+    "code": "Valorant",
+    "brand": "Valorant"
+  },
+  {
+    "id": "4ac0852d-b3ac-46af-8a22-120029792146",
+    "name": "Mobile Legends Gift",
+    "slug": "mobile-legends-gift",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends Gift"
+  },
+  {
+    "id": "e7df3ff7-4caa-4269-9acc-f70e0fa1438a",
+    "name": "Ragnarok M",
+    "slug": "ragnarok-m",
+    "code": "Ragnarok M",
+    "brand": "Ragnarok"
+  },
+  {
+    "id": "6972ccb0-a8a4-4be1-a84f-96947d90d764",
+    "name": "Ragnarok Origin",
+    "slug": "ragnarok-origin",
+    "code": "Ragnarok Origin",
+    "brand": "Ragnarok"
+  },
+  {
+    "id": "6415b39e-08a1-4002-9784-03e8251dc1fe",
+    "name": "RagnaroK X Next Generation",
+    "slug": "ragnarok-x-next-generation",
+    "code": "RagnaroK X Next Generation",
+    "brand": "Ragnarok"
+  },
+  {
+    "id": "c60faf64-1ad8-405a-9c60-79495685c6bb",
+    "name": "Genshin Impact",
+    "slug": "genshin-impact",
+    "code": "Genshin Impact",
+    "brand": "Genshin Impact"
+  },
+  {
+    "id": "86ef1eb4-6ac6-4646-bd8d-b184c3cea1e3",
+    "name": "Honkai Impact 3",
+    "slug": "honkai-impact-3-457",
+    "code": "honkai-impact-3",
+    "brand": "Honkai Impact 3"
+  },
+  {
+    "id": "37f68d78-d7e8-4bf1-b656-74df383d2cb2",
+    "name": "Honkai Star Rail",
+    "slug": "honkai-star-rail-449",
+    "code": "honkai-star-rail",
+    "brand": "Honkai Star Rail"
+  },
+  {
+    "id": "acb748bc-6574-42cb-890a-1ac376ede4a9",
+    "name": "Honor of Kings Global",
+    "slug": "honor-of-kings-global-698",
+    "code": "honor-of-kings-global",
+    "brand": "Honor of Kings Global"
+  },
+  {
+    "id": "9926c24f-9f78-4129-b208-34c9985d5b04",
+    "name": "Identity V",
+    "slug": "identity-v-932",
+    "code": "identity-v",
+    "brand": "Identity V"
+  },
+  {
+    "id": "fcdd7cfb-ecfd-45bc-956e-ebac52e719e0",
+    "name": "Infinite Borders",
+    "slug": "infinite-borders-466",
+    "code": "infinite-borders",
+    "brand": "Infinite Borders"
+  },
+  {
+    "id": "1d659ede-c37e-4479-ae76-d1a550bba2a9",
+    "name": "iQIYI Premium",
+    "slug": "iqiyi-premium-768",
+    "code": "iqiyi-premium",
+    "brand": "iQIYI Premium"
+  },
+  {
+    "id": "58246d3b-6044-410c-a1eb-aa2f244190aa",
+    "name": "King Of Avalon",
+    "slug": "king-of-avalon-913",
+    "code": "king-of-avalon",
+    "brand": "King Of Avalon"
+  },
+  {
+    "id": "00a2d9e0-0628-4b3d-ba39-35ca580dffd3",
+    "name": "League of Legends",
+    "slug": "league-of-legends-344",
+    "code": "league-of-legends",
+    "brand": "League of Legends"
+  },
+  {
+    "id": "f9cb6e4f-2aca-40c1-8f93-77521091da15",
+    "name": "LifeAfter",
+    "slug": "lifeafter-172",
+    "code": "lifeafter",
+    "brand": "LifeAfter"
+  },
+  {
+    "id": "02439127-ab92-4ba6-811a-eb14218e2a25",
+    "name": "Light of Thel: New Era",
+    "slug": "light-of-thel-new-era-499",
+    "code": "light-of-thel-new-era",
+    "brand": "Light of Thel: New Era"
+  },
+  {
+    "id": "65f919ec-da6b-4f7e-be21-f22574d450f4",
+    "name": "Voucher Roblox",
+    "slug": "voucher-roblox",
+    "code": "Voucher Roblox",
+    "brand": "Roblox"
+  },
+  {
+    "id": "8482f6d6-f286-405b-a678-0ae80fd11ed7",
+    "name": "AFK Journey",
+    "slug": "afk-journey",
+    "code": "AFK Journey",
+    "brand": "AFK Journey"
+  },
+  {
+    "id": "edc90d40-212a-4132-a4fd-976c2fdeebb5",
+    "name": "Astral Guardians: Cyber Fantasy",
+    "slug": "astral-guardians-cyber-fantasy",
+    "code": "Astral Guardians: Cyber Fantasy",
+    "brand": "Astral Guardians: Cyber Fantasy"
+  },
+  {
+    "id": "25c1ce8e-c9f5-4c4a-9b8c-f6d9fb4364cb",
+    "name": "Be The King",
+    "slug": "be-the-king",
+    "code": "Be The King",
+    "brand": "Be The King"
+  },
+  {
+    "id": "6c222fcc-d6b7-4f01-a37d-4459fd0a7942",
+    "name": "Domino Gaple Boyaa Qiuqiu",
+    "slug": "domino-gaple-qiuqiu-boyaa",
+    "code": "Domino Gaple Boyaa Qiuqiu",
+    "brand": "Domino Gaple Boyaa Qiuqiu"
+  },
+  {
+    "id": "b3e5bef0-f7f2-41c4-b713-e22b4be40e07",
+    "name": "Eggy Party",
+    "slug": "eggy-party",
+    "code": "Eggy Party",
+    "brand": "Eggy Party"
+  },
+  {
+    "id": "0fd4908c-fff2-4cd7-a7f1-70e8e21cc8b6",
+    "name": "Football Master 2",
+    "slug": "football-master-2",
+    "code": "Football Master 2",
+    "brand": "Football Master 2"
+  },
+  {
+    "id": "9a3edcd9-0138-4473-aa43-f1e5dd1d0f17",
+    "name": "Growtopia",
+    "slug": "growtopia",
+    "code": "Growtopia",
+    "brand": "Growtopia"
+  },
+  {
+    "id": "88126189-2dcf-41c7-bbe9-0deb787c568c",
+    "name": "Higgs Domino",
+    "slug": "higgs-domino",
+    "code": "Higgs Domino",
+    "brand": "Higgs Domino"
+  },
+  {
+    "id": "093c90dd-f8b3-438a-83f9-02310a976d11",
+    "name": "Identity V",
+    "slug": "identity-v",
+    "code": "Identity V",
+    "brand": "Identity V"
+  },
+  {
+    "id": "c972d99f-5929-4775-aad6-3af07caa0677",
+    "name": "Likee",
+    "slug": "likee",
+    "code": "Likee",
+    "brand": "Likee"
+  },
+  {
+    "id": "85ae78b5-09e0-43c2-b4ec-331eeb870b85",
+    "name": "Love and Deepspace",
+    "slug": "love-and-deepspace",
+    "code": "Love and Deepspace",
+    "brand": "Love and Deepspace"
+  },
+  {
+    "id": "a0879367-3f77-4db6-bf9c-5c9abf880106",
+    "name": "Ludo Club",
+    "slug": "ludo-club",
+    "code": "Ludo Club",
+    "brand": "Ludo Club"
+  },
+  {
+    "id": "2a850485-cda0-4752-ad7d-7b2555f4d450",
+    "name": "Speed Drifters",
+    "slug": "speed-drifters",
+    "code": "Speed Drifters",
+    "brand": "Speed Drifters"
+  },
+  {
+    "id": "bdba0bef-eea1-4d01-bc82-b0d5c13cd8a4",
+    "name": "Roblox Via Login",
+    "slug": "roblox-via-login",
+    "code": "Roblox Via Login",
+    "brand": "Roblox"
+  },
+  {
+    "id": "889e290d-48b6-437c-b86d-03209eb186e8",
+    "name": "Voucher Razer Gold",
+    "slug": "voucher-razer-gold",
+    "code": "Voucher Razer Gold",
+    "brand": "Razer Gold"
+  },
+  {
+    "id": "c9d7a391-6d85-4aed-9915-0ae44447b569",
+    "name": "Zepeto",
+    "slug": "zepeto",
+    "code": "Zepeto",
+    "brand": "Zepeto"
+  },
+  {
+    "id": "6cafcc34-f559-438c-a91c-4b2dcde2843c",
+    "name": "Ace Racer",
+    "slug": "ace-racer-327",
+    "code": "ace-racer",
+    "brand": "Ace Racer"
+  },
+  {
+    "id": "cfa6c3bd-1a26-4030-9c87-73b3c88fb40f",
+    "name": "Voucher Valorant",
+    "slug": "voucher-valorant",
+    "code": "Voucher Valorant",
+    "brand": "Valorant"
+  },
+  {
+    "id": "461bd54e-c1e4-4542-ab06-92ae63430d85",
+    "name": "Arena Breakout: Infinite (PC)",
+    "slug": "arena-breakout-infinite-pc-324",
+    "code": "arena-breakout-infinite-pc",
+    "brand": "Arena Breakout: Infinite (PC)"
+  },
+  {
+    "id": "7f1b857d-6711-4f86-b751-557061aa1c00",
+    "name": "Likee",
+    "slug": "likee-141",
+    "code": "likee",
+    "brand": "Likee"
+  },
+  {
+    "id": "fbb55495-cad3-40ae-99f6-33b089c7370a",
+    "name": "Lords Mobile",
+    "slug": "lords-mobile-435",
+    "code": "lords-mobile",
+    "brand": "Lords Mobile"
+  },
+  {
+    "id": "243b1618-2185-4db3-81af-0c3e2c4ada22",
+    "name": "Mobile Legends B (ID)",
+    "slug": "mobile-legends-b",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends"
+  },
+  {
+    "id": "42bcda1a-20b6-4935-bba3-02bb8c7ac155",
+    "name": "Love and Deepspace",
+    "slug": "love-and-deepspace-195",
+    "code": "love-and-deepspace",
+    "brand": "Love and Deepspace"
+  },
+  {
+    "id": "4f1749f8-c421-4354-959b-07d3d5075b71",
+    "name": "Magic Chess: Go Go",
+    "slug": "magic-chess-go-go-431",
+    "code": "magic-chess-go-go",
+    "brand": "Magic Chess: Go Go"
+  },
+  {
+    "id": "659be79b-030d-42eb-8c40-36ca7afaa9af",
+    "name": "Magic Chess: Go Go (Global)",
+    "slug": "magic-chess-go-go-global-825",
+    "code": "magic-chess-go-go-global",
+    "brand": "Magic Chess: Go Go (Global)"
+  },
+  {
+    "id": "057bfe17-c1ea-4ed6-9881-f48e760ae719",
+    "name": "Marvel Duel",
+    "slug": "marvel-duel-325",
+    "code": "marvel-duel",
+    "brand": "Marvel Duel"
+  },
+  {
+    "id": "ef15c6f5-8ca0-4c5d-a0fe-84fc4ea6befe",
+    "name": "Marvel Rivals",
+    "slug": "marvel-rivals-649",
+    "code": "marvel-rivals",
+    "brand": "Marvel Rivals"
+  },
+  {
+    "id": "56fe1276-383a-4a59-a87f-fbbaa68dbc03",
+    "name": "Metal Slug Awakening",
+    "slug": "metal-slug-awakening-601",
+    "code": "metal-slug-awakening",
+    "brand": "Metal Slug Awakening"
+  },
+  {
+    "id": "65a908bd-5362-41c0-b27d-5716edcabf55",
+    "name": "Mobile Legends A (ID)",
+    "slug": "mobile-legends-a",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends"
+  },
+  {
+    "id": "c77d13a3-ea52-4a0e-b30a-a5c5c4f46f35",
+    "name": "King Of Avalon",
+    "slug": "king-of-avalon-632",
+    "code": "king-of-avalon",
+    "brand": "King Of Avalon"
+  },
+  {
+    "id": "2a6ef8b8-3ad3-4550-855b-d6f5955ac16c",
+    "name": "League of Legends",
+    "slug": "league-of-legends-159",
+    "code": "league-of-legends",
+    "brand": "League of Legends"
+  },
+  {
+    "id": "df2bb067-8e14-4d67-9e28-287ec45e2350",
+    "name": "LifeAfter",
+    "slug": "lifeafter-746",
+    "code": "lifeafter",
+    "brand": "LifeAfter"
+  },
+  {
+    "id": "3dabf386-f665-4fce-9f98-e4314a08d062",
+    "name": "Alight Motion",
+    "slug": "alight-motion",
+    "code": "Alight Motion",
+    "brand": "Alight Motion"
+  },
+  {
+    "id": "72397e96-e211-4d00-b205-6127123f4a80",
+    "name": "Amazon Prime Video",
+    "slug": "amazon-prime-video",
+    "code": "Amazon Prime Video",
+    "brand": "Amazon Prime Video"
+  },
+  {
+    "id": "9972ca9f-bf3d-4636-9939-de33583422f3",
+    "name": "Arena Breakout: Infinite (PC)",
+    "slug": "arena-breakout:-infinite-(pc)",
+    "code": "Arena Breakout: Infinite (PC)",
+    "brand": "Arena Breakout: Infinite (PC)"
+  },
+  {
+    "id": "d4208092-ac01-458f-ba66-81cce2ca0bf7",
+    "name": "Ace Racer",
+    "slug": "ace-racer",
+    "code": "Ace Racer",
+    "brand": "Ace Racer"
+  },
+  {
+    "id": "f874cde2-f313-4d2b-8f73-eb3de19d2ec4",
+    "name": "Mobile Legends B",
+    "slug": "mobile-legends-b-97",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends B"
+  },
+  {
+    "id": "9db96a55-efc9-443f-b5c2-a75aca247715",
+    "name": "Conquer Online (Point Card)",
+    "slug": "conquer-online-(point-card)-conquer-online-(point-card)",
+    "code": "conquer-online-(point-card)",
+    "brand": "Conquer Online (Point Card)"
+  },
+  {
+    "id": "90d6b40b-5bcd-43ee-be44-7fd5c4f93717",
+    "name": "Dynasty Warriors: Overlords",
+    "slug": "dynasty-warriors:-overlords-dynasty-warriors:-overlords",
+    "code": "dynasty-warriors:-overlords",
+    "brand": "Dynasty Warriors: Overlords"
+  },
+  {
+    "id": "f414d83b-47e4-4753-abd4-43702c2a4e72",
+    "name": "Free Fire Global",
+    "slug": "free-fire-global-free-fire-global",
+    "code": "free-fire-global",
+    "brand": "Free Fire Global"
+  },
+  {
+    "id": "92547b5b-c0d3-4630-a090-9f1f95fbc02b",
+    "name": "Free Fire Max Global",
+    "slug": "free-fire-max-global-free-fire-max-global",
+    "code": "free-fire-max-global",
+    "brand": "Free Fire Max Global"
+  },
+  {
+    "id": "6e9714c7-bd20-4300-9d2f-71c271169b74",
+    "name": "Light of Thel: New Era",
+    "slug": "light-of-thel:-new-era-light-of-thel:-new-era",
+    "code": "light-of-thel:-new-era",
+    "brand": "Light of Thel: New Era"
+  },
+  {
+    "id": "ffe7a095-7594-456e-a643-d3cf0d5d4624",
+    "name": "Magic Chess: Go Go",
+    "slug": "magic-chess:-go-go-magic-chess:-go-go",
+    "code": "magic-chess:-go-go",
+    "brand": "Magic Chess: Go Go"
+  },
+  {
+    "id": "2cc07c6d-7a46-4875-b0cd-33bbc40e3e10",
+    "name": "Likee",
+    "slug": "likee-968",
+    "code": "likee",
+    "brand": "Likee"
+  },
+  {
+    "id": "575f5a38-f7b4-410f-8778-1117a1d330a4",
+    "name": "Lords Mobile",
+    "slug": "lords-mobile-393",
+    "code": "lords-mobile",
+    "brand": "Lords Mobile"
+  },
+  {
+    "id": "aeb23b47-9bbe-4c72-9e1c-8cc71a36fff8",
+    "name": "Love and Deepspace",
+    "slug": "love-and-deepspace-312",
+    "code": "love-and-deepspace",
+    "brand": "Love and Deepspace"
+  },
+  {
+    "id": "a553c366-65f6-4b11-8340-dd83325aa059",
+    "name": "Dragon Raja",
+    "slug": "dragon-raja",
+    "code": "Dragon Raja",
+    "brand": "Dragon Raja"
+  },
+  {
+    "id": "afa0c686-265a-4bf3-9da6-d8f1e9be900c",
+    "name": "Dragonheir Silent Gods",
+    "slug": "dragonheir-silent-gods",
+    "code": "Dragonheir Silent Gods",
+    "brand": "Dragonheir Silent Gods"
+  },
+  {
+    "id": "eb6410b8-d452-4e07-ac89-c752fa0e7910",
+    "name": "Laplace M",
+    "slug": "laplace-m",
+    "code": "Laplace M",
+    "brand": "Laplace M"
+  },
+  {
+    "id": "a55f8006-65af-4948-bcb8-1ae5eafe2757",
+    "name": "League of Legends",
+    "slug": "league-of-legends",
+    "code": "League of Legends",
+    "brand": "League of Legends"
+  },
+  {
+    "id": "86354d5c-13fe-4a15-bc08-75afb981bfd3",
+    "name": "League of Legends: Wild Rift",
+    "slug": "league-of-legends-wild-rift",
+    "code": "league-of-legends-wild-rift",
+    "brand": "League of Legends"
+  },
+  {
+    "id": "430c9746-1a91-430c-b365-f612bc0e04c0",
+    "name": "LifeAfter",
+    "slug": "lifeafter",
+    "code": "LifeAfter",
+    "brand": "LifeAfter"
+  },
+  {
+    "id": "b2340d29-0a7d-400d-9bc0-b165da05c745",
+    "name": "Light of Thel: New Era",
+    "slug": "light-of-thel-new-era",
+    "code": "Light of Thel: New Era",
+    "brand": "Light of Thel: New Era"
+  },
+  {
+    "id": "7c11e96b-7f0b-4d2f-a2e2-9c97d802e0d1",
+    "name": "Ragnarok M",
+    "slug": "ragnarok-m-eternal-love-big-cat-coin",
+    "code": "ragnarok-m-eternal-love-big-cat-coin",
+    "brand": "Ragnarok"
+  },
+  {
+    "id": "3285e1e2-de51-4d37-8391-ad9481ae8b70",
+    "name": "Ragnarok M Eternal Love (SEA)",
+    "slug": "ragnarok-m-eternal-love-sea",
+    "code": "Ragnarok M Eternal Love (SEA)",
+    "brand": "Ragnarok"
+  },
+  {
+    "id": "188b93ef-1dfb-43f4-9f71-f5a15c3a499a",
+    "name": "Watcher Of Realms",
+    "slug": "watcher-of-realms",
+    "code": "Watcher Of Realms",
+    "brand": "Watcher Of Realms"
+  },
+  {
+    "id": "1cf24641-548c-428c-a1cb-da0bdbe4bd1c",
+    "name": "Magic Chess: Go Go (Global)",
+    "slug": "magic-chess-go-go-global-510",
+    "code": "magic-chess-go-go-global",
+    "brand": "Magic Chess: Go Go (Global)"
+  },
+  {
+    "id": "308f9a9e-84b9-4ef1-84dd-e8087cd550dc",
+    "name": "Whiteout Survival",
+    "slug": "whiteout-survival",
+    "code": "Whiteout Survival",
+    "brand": "Whiteout Survival"
+  },
+  {
+    "id": "efecdf06-c003-4f7c-83f0-6125bce6fd2d",
+    "name": "Zenless Zone Zero (ZZZ)",
+    "slug": "zenless-zone-zero",
+    "code": "Zenless Zone Zero (ZZZ)",
+    "brand": "Zenless Zone Zero (ZZZ)"
+  },
+  {
+    "id": "8c8e31d4-1a6d-455d-9f89-ca763004128e",
+    "name": "NBA Infinite (Europe)",
+    "slug": "nba-infinite-europe-448",
+    "code": "nba-infinite-europe",
+    "brand": "NBA Infinite (Europe)"
+  },
+  {
+    "id": "9a693331-c56c-4902-9b9a-acca511ea446",
+    "name": "One Punch Man",
+    "slug": "one-punch-man-142",
+    "code": "one-punch-man",
+    "brand": "One Punch Man"
+  },
+  {
+    "id": "a52ee0e4-51a5-4151-8638-1128fa098665",
+    "name": "Perplexity AI",
+    "slug": "perplexity-ai-655",
+    "code": "perplexity-ai",
+    "brand": "Perplexity AI"
+  },
+  {
+    "id": "00d2f01e-6b55-4bb8-bf05-d5199fe9f069",
+    "name": "Arena Breakout: Infinite (PC)",
+    "slug": "arena-breakout:-infinite-(pc)-arena-breakout:-infinite-(pc)",
+    "code": "arena-breakout:-infinite-(pc)",
+    "brand": "Arena Breakout: Infinite (PC)"
+  },
+  {
+    "id": "48dfcb2a-6d81-41cf-93b2-220d5b1c5f98",
+    "name": "Astral Guardians: Cyber Fantasy",
+    "slug": "astral-guardians:-cyber-fantasy-astral-guardians:-cyber-fantasy",
+    "code": "astral-guardians:-cyber-fantasy",
+    "brand": "Astral Guardians: Cyber Fantasy"
+  },
+  {
+    "id": "07d65ead-cb78-4c9f-bb96-454eba1d13de",
+    "name": "Call Of Duty Mobile (Indonesia)",
+    "slug": "call-of-duty-mobile-(indonesia)-call-of-duty-mobile-(indonesia)",
+    "code": "call-of-duty-mobile-(indonesia)",
+    "brand": "Call Of Duty Mobile (Indonesia)"
+  },
+  {
+    "id": "c57e57ad-7df8-475f-bbbb-01aa84b14895",
+    "name": "Marvel Duel",
+    "slug": "marvel-duel-997",
+    "code": "marvel-duel",
+    "brand": "Marvel Duel"
+  },
+  {
+    "id": "aca646b3-be94-4dbe-80ee-e64202abe374",
+    "name": "Marvel Rivals",
+    "slug": "marvel-rivals-974",
+    "code": "marvel-rivals",
+    "brand": "Marvel Rivals"
+  },
+  {
+    "id": "1eb13a08-144e-4845-8497-a8facea431e7",
+    "name": "Metal Slug Awakening",
+    "slug": "metal-slug-awakening-616",
+    "code": "metal-slug-awakening",
+    "brand": "Metal Slug Awakening"
+  },
+  {
+    "id": "3bee5ad7-d30c-4ebf-aec2-09391c426c8a",
+    "name": "Astral Guardians: Cyber Fantasy",
+    "slug": "astral-guardians:-cyber-fantasy",
+    "code": "Astral Guardians: Cyber Fantasy",
+    "brand": "Astral Guardians: Cyber Fantasy"
+  },
+  {
+    "id": "5113104a-38c6-475f-b5a2-0ff57c4e7cdc",
+    "name": "Bstation Premium",
+    "slug": "bstation-premium",
+    "code": "Bstation Premium",
+    "brand": "Bstation Premium"
+  },
+  {
+    "id": "7e0c0e28-8f19-4dc2-8f00-bb772c212c3b",
+    "name": "Call Of Duty Mobile (Indonesia)",
+    "slug": "call-of-duty-mobile-(indonesia)",
+    "code": "Call Of Duty Mobile (Indonesia)",
+    "brand": "Call Of Duty Mobile (Indonesia)"
+  },
+  {
+    "id": "d03e804f-04d1-498b-85b0-d0e5bd9c6488",
+    "name": "Canva Pro",
+    "slug": "canva-pro",
+    "code": "Canva Pro",
+    "brand": "Canva Pro"
+  },
+  {
+    "id": "c8fe2f9a-2178-4ff2-a18c-6695863033a7",
+    "name": "CapCut Pro",
+    "slug": "capcut-pro",
+    "code": "CapCut Pro",
+    "brand": "CapCut Pro"
+  },
+  {
+    "id": "a014734f-46b4-4788-90b0-ac65b51919aa",
+    "name": "ChatGPT",
+    "slug": "chatgpt",
+    "code": "ChatGPT",
+    "brand": "ChatGPT"
+  },
+  {
+    "id": "d0d213b5-ea55-4701-9d13-5cf3823cbbf6",
+    "name": "Conquer Online (Point Card)",
+    "slug": "conquer-online-(point-card)",
+    "code": "Conquer Online (Point Card)",
+    "brand": "Conquer Online (Point Card)"
+  },
+  {
+    "id": "32342c62-28b1-46b4-a7df-59a579b70f5c",
+    "name": "Voucher Megaxus",
+    "slug": "voucher-megaxus",
+    "code": "Voucher Megaxus",
+    "brand": "Megaxus"
+  },
+  {
+    "id": "2ce6e35f-e96c-4e23-9157-c6fa76f01266",
+    "name": "Voucher PB Zepetto",
+    "slug": "voucher-pb-zepetto-124",
+    "code": "voucher-pb-zepetto",
+    "brand": "Voucher PB Zepetto"
+  },
+  {
+    "id": "f29a9594-1803-4d86-80c8-eea438810f56",
+    "name": "Bullet Angel",
+    "slug": "bullet-angel",
+    "code": "Bullet Angel",
+    "brand": "Bullet Angel"
+  },
+  {
+    "id": "49a80323-85c5-4182-b5bb-540e52cab9fc",
+    "name": "8 Ball Pool Updated",
+    "slug": "8-ball-pool",
+    "code": "8 Ball Pool",
+    "brand": "8 Ball Pool"
+  },
+  {
+    "id": "648340bd-1efe-44bf-a86c-ea3d518ec41a",
+    "name": "Voucher PB Zepetto",
+    "slug": "voucher-pb-zepetto",
+    "code": "Voucher PB Zepetto",
+    "brand": "Point Blank"
+  },
+  {
+    "id": "ee748ab3-98da-438c-b9ff-e77b35d424df",
+    "name": "Voucher PSN",
+    "slug": "voucher-psn",
+    "code": "Voucher PSN",
+    "brand": "PSN"
+  },
+  {
+    "id": "3966d6e1-77ac-4db0-bc22-034c90bbc853",
+    "name": "Warp Plus",
+    "slug": "warp-plus",
+    "code": "Warp Plus",
+    "brand": "Warp Plus"
+  },
+  {
+    "id": "010a28b7-ba8c-49ee-bd2a-11e6b738dd20",
+    "name": "Tom and Jerry Chase",
+    "slug": "tom-and-jerry-chase-duplicate",
+    "code": "Tom and Jerry Chase",
+    "brand": "Tom and Jerry"
+  },
+  {
+    "id": "9a9a2e7e-518a-4f7e-a35b-8d341aace721",
+    "name": "Arena of Valor",
+    "slug": "arena-of-valor-417",
+    "code": "arena-of-valor",
+    "brand": "Arena of Valor"
+  },
+  {
+    "id": "bea363c7-27b8-42e7-91f5-967f77dbdcaf",
+    "name": "Sausage Man",
+    "slug": "sausage-man-236",
+    "code": "sausage-man",
+    "brand": "Sausage Man"
+  },
+  {
+    "id": "5ccadbdf-824e-44a0-b744-827eb207ea88",
+    "name": "State of Survival: Zombie War",
+    "slug": "state-of-survival-zombie-war-528",
+    "code": "state-of-survival-zombie-war",
+    "brand": "State of Survival: Zombie War"
+  },
+  {
+    "id": "569f7b99-1f72-49d6-a964-ededcfee347a",
+    "name": "Steam Wallet Code",
+    "slug": "steam-wallet-code-840",
+    "code": "steam-wallet-code",
+    "brand": "Steam Wallet Code"
+  },
+  {
+    "id": "75feef21-d84d-4a09-9c89-29a2fa2845ee",
+    "name": "Super Sus",
+    "slug": "super-sus-177",
+    "code": "super-sus",
+    "brand": "Super Sus"
+  },
+  {
+    "id": "5706ea16-6cd9-4afc-bdf9-8faa9bc56aec",
+    "name": "Tom and Jerry Chase",
+    "slug": "tom-and-jerry-chase-210",
+    "code": "tom-and-jerry-chase",
+    "brand": "Tom and Jerry Chase"
+  },
+  {
+    "id": "7d10ddd8-e4f3-4098-9588-a1472cb4b13c",
+    "name": "AFK Journey",
+    "slug": "afk-journey-940",
+    "code": "afk-journey",
+    "brand": "AFK Journey"
+  },
+  {
+    "id": "919bf411-22a1-419b-bfb2-7e2ea4294ef8",
+    "name": "Valorant",
+    "slug": "valorant-782",
+    "code": "valorant",
+    "brand": "Valorant"
+  },
+  {
+    "id": "7b48d0d1-f68b-40c3-a4c7-dcfdfbe12492",
+    "name": "Vidio Premier",
+    "slug": "vidio-premier-250",
+    "code": "vidio-premier",
+    "brand": "Vidio Premier"
+  },
+  {
+    "id": "b198ccdd-53fa-47c7-8a1c-521acf404a86",
+    "name": "Age of Empires Mobile",
+    "slug": "age-of-empires-mobile-405",
+    "code": "age-of-empires-mobile",
+    "brand": "Age of Empires Mobile"
+  },
+  {
+    "id": "bbef5063-e78b-4efb-95b8-6b5d7d968ebe",
+    "name": "Alight Motion",
+    "slug": "alight-motion-880",
+    "code": "alight-motion",
+    "brand": "Alight Motion"
+  },
+  {
+    "id": "28ab7761-afd7-48b3-865d-37c9b7da3acb",
+    "name": "Cocofun",
+    "slug": "cocofun",
+    "code": "Cocofun",
+    "brand": "Cocofun"
+  },
+  {
+    "id": "4d974c58-f11c-44dc-96c9-453f191376cf",
+    "name": "EA SPORTS FC Mobile",
+    "slug": "ea-sports-fc-mobile",
+    "code": "EA SPORTS FC Mobile",
+    "brand": "EA SPORTS FC Mobile"
+  },
+  {
+    "id": "9d1df9ff-47b4-49c7-a6fc-56294a99e4c6",
+    "name": "Vision Plus",
+    "slug": "vision-plus-691",
+    "code": "vision-plus",
+    "brand": "Vision Plus"
+  },
+  {
+    "id": "6b94cae5-e01d-40be-8f1f-1f2407c693c7",
+    "name": "Garena Undawn",
+    "slug": "garena-undawn",
+    "code": "Garena Undawn",
+    "brand": "Garena Undawn"
+  },
+  {
+    "id": "809c34db-9141-4e96-97c7-264a284679b1",
+    "name": "IndoPlay",
+    "slug": "indoplay",
+    "code": "IndoPlay",
+    "brand": "IndoPlay"
+  },
+  {
+    "id": "d326d16e-5272-4985-9089-efe06c573ec4",
+    "name": "Infinite Borders",
+    "slug": "infinite-borders",
+    "code": "Infinite Borders",
+    "brand": "Infinite Borders"
+  },
+  {
+    "id": "69940e99-e258-454b-91a3-1330db366042",
+    "name": "NBA Infinite (Europe)",
+    "slug": "nba-infinite-europe",
+    "code": "NBA Infinite (Europe)",
+    "brand": "NBA Infinite"
+  },
+  {
+    "id": "43a0bd02-7b26-4bc7-9bd0-9f4154303c38",
+    "name": "One Punch Man",
+    "slug": "one-punch-man",
+    "code": "One Punch Man",
+    "brand": "One Punch Man"
+  },
+  {
+    "id": "63ff7c09-ed31-4361-bc72-74947e58b4e6",
+    "name": "Steam Wallet Code",
+    "slug": "steam-wallet-code",
+    "code": "Steam Wallet Code",
+    "brand": "Steam"
+  },
+  {
+    "id": "6a3705e1-9df1-47a6-a92d-96c9144093dc",
+    "name": "Amazon Prime Video",
+    "slug": "amazon-prime-video-548",
+    "code": "amazon-prime-video",
+    "brand": "Amazon Prime Video"
+  },
+  {
+    "id": "4efccc53-cb18-46be-87a8-77206383e4f7",
+    "name": "Tom and Jerry:chase",
+    "slug": "tom-and-jerry-chase",
+    "code": "tom-and-jerry-chase",
+    "brand": "Tom and Jerry"
+  },
+  {
+    "id": "8a38e7db-3741-4441-b9c5-e518253400a9",
+    "name": "Voucher Garena Shell",
+    "slug": "voucher-garena-shell",
+    "code": "Voucher Garena Shell",
+    "brand": "Garena"
+  },
+  {
+    "id": "6b54a518-fe15-424c-9a12-07530b334b85",
+    "name": "Revelation Infinite Journey",
+    "slug": "revelation-infinite-journey",
+    "code": "Revelation Infinite Journey",
+    "brand": "Revelation Infinite Journey"
+  },
+  {
+    "id": "c9ceec2c-597c-4636-995c-9c41a4c73811",
+    "name": "Viu Premium",
+    "slug": "viu-premium-67",
+    "code": "viu-premium",
+    "brand": "Viu Premium"
+  },
+  {
+    "id": "6cf12d06-1d81-4f33-89d3-3650fe068d1b",
+    "name": "Voucher Garena Shell",
+    "slug": "voucher-garena-shell-832",
+    "code": "voucher-garena-shell",
+    "brand": "Voucher Garena Shell"
+  },
+  {
+    "id": "a2ca62e5-3f2f-4628-b465-c0a71c1dc5a2",
+    "name": "Arena Breakout",
+    "slug": "arena-breakout-294",
+    "code": "arena-breakout",
+    "brand": "Arena Breakout"
+  },
+  {
+    "id": "865c6267-4ebd-4de7-a659-cd1f4d419107",
+    "name": "Be The King",
+    "slug": "be-the-king-700",
+    "code": "be-the-king",
+    "brand": "Be The King"
+  },
+  {
+    "id": "ddc218c0-2800-4c24-a1ab-50f35ad7a55d",
+    "name": "Blood Strike",
+    "slug": "blood-strike-218",
+    "code": "blood-strike",
+    "brand": "Blood Strike"
+  },
+  {
+    "id": "93565eaa-a137-479b-9e68-76c16f4de457",
+    "name": "Bstation Premium",
+    "slug": "bstation-premium-627",
+    "code": "bstation-premium",
+    "brand": "Bstation Premium"
+  },
+  {
+    "id": "444f87a6-ba6e-4f32-85d3-8d7faa56f6c3",
+    "name": "Delta Force",
+    "slug": "delta-force-813",
+    "code": "delta-force",
+    "brand": "Delta Force"
+  },
+  {
+    "id": "54a53c9d-12a9-464b-b7c3-b6fbf06f2b60",
+    "name": "Dragon Raja",
+    "slug": "dragon-raja-142",
+    "code": "dragon-raja",
+    "brand": "Dragon Raja"
+  },
+  {
+    "id": "49302884-f4bf-4511-acd5-f576636623d9",
+    "name": "Dynasty Warriors: Overlords",
+    "slug": "dynasty-warriors:-overlords",
+    "code": "Dynasty Warriors: Overlords",
+    "brand": "Dynasty Warriors: Overlords"
+  },
+  {
+    "id": "0e1d55ae-0964-4288-bcdf-083e1fe2a5dd",
+    "name": "iQIYI Premium",
+    "slug": "iqiyi-premium",
+    "code": "iQIYI Premium",
+    "brand": "iQIYI Premium"
+  },
+  {
+    "id": "e0b6999b-5545-4238-85c6-6610de5341f2",
+    "name": "Light of Thel: New Era",
+    "slug": "light-of-thel:-new-era",
+    "code": "Light of Thel: New Era",
+    "brand": "Light of Thel: New Era"
+  },
+  {
+    "id": "65d96fc1-a032-4a26-baf5-3b3feee0d634",
+    "name": "Magic Chess: Go Go",
+    "slug": "magic-chess:-go-go",
+    "code": "Magic Chess: Go Go",
+    "brand": "Magic Chess: Go Go"
+  },
+  {
+    "id": "fbb9a135-f481-484d-8773-110f69598347",
+    "name": "Mobile Legends A",
+    "slug": "mobile-legends-a-683",
+    "code": "mobile-legends",
+    "brand": "Mobile Legends A"
+  },
+  {
+    "id": "c4ba780a-754d-4313-bcfc-b30d50ae6243",
+    "name": "Ace Racer",
+    "slug": "ace-racer-764",
+    "code": "ace-racer",
+    "brand": "Ace Racer"
+  }
+]

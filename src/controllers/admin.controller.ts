@@ -174,20 +174,41 @@ export const getAllProducts = async (req: Request, res: Response) => {
 };
 // POST /api/admin/products/sync
 import * as vipService from '../services/vip.service.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export const syncProducts = async (req: Request, res: Response) => {
-    console.log('🔄 [SYNC] Starting Product Sync (VIP Direct)...');
-
     try {
-        // 1. Fetch ALL Services from VIP Provider
-        const result = await vipService.getMerchantServices();
+        // 1. Fetch from Provider
+        console.log('🔄 [SYNC] Fetching products from VIP...');
+        const result = await vipService.getMerchantServices(); // Use direct export
 
         if (!result.success || !Array.isArray(result.data)) {
-            throw new Error(result.message || "Failed to fetch services from VIP");
+            return res.status(400).json({ success: false, message: result.message || 'No products found' });
         }
-
         const providerServices = result.data;
         console.log(`📦 [SYNC] Received ${providerServices.length} services from VIP.`);
+
+        // [NEW] Load Manual Category Mapping from JSON (Generated from Excel)
+        let manualCats = new Map();
+        try {
+            const mappingPath = path.join(process.cwd(), 'category_mapping.json'); // Fix path to root
+            if (fs.existsSync(mappingPath)) {
+                const rawMapping = fs.readFileSync(mappingPath, 'utf-8');
+                const mappingData = JSON.parse(rawMapping);
+                mappingData.forEach((item: any) => {
+                    // Map by Name (e.g. "Mobile Legends A") AND Brand
+                    if (item.name) manualCats.set(item.name.toLowerCase(), item);
+                    // if (item.brand) manualCats.set(item.brand.toLowerCase(), item); // Don't map by brand generic, only specific name?
+                    // Actually, if Excel has specific "Mobile Legends A", we want to map "Mobile Legends A" products to that ID.
+                });
+                console.log(`📂 [SYNC] Loaded ${mappingData.length} manual category mappings.`);
+            } else {
+                console.warn(`⚠️ [SYNC] Mapping file not found at ${mappingPath}`);
+            }
+        } catch (e) {
+            console.error("❌ Failed to load category mapping:", e);
+        }
 
         // 2. Get All Active Categories for mapping
         const categories = await prisma.category.findMany({
@@ -290,8 +311,43 @@ export const syncProducts = async (req: Request, res: Response) => {
             let catName = (item.category || 'Unknown Game').trim();
             const catKey = catName.toLowerCase();
 
-            // Try matching by Name, Code, or Slug (from map keys)
-            let category = catMap.get(catKey);
+            // Initialize category variable for scope
+            let category: any = null;
+
+            // NEW: Check Manual Mapping first
+            const mappedCat = manualCats.get(catKey);
+            if (mappedCat) {
+                // Try to find by ID first (Most reliable)
+                category = await prisma.category.findUnique({ where: { id: mappedCat.id } });
+
+                if (!category) {
+                    // Create with forced ID
+                    const slug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                    const brand = normalizeBrand(catName);
+
+                    try {
+                        category = await prisma.category.create({
+                            data: {
+                                id: mappedCat.id, // FORCE ID
+                                name: catName,
+                                slug: slug + '-' + Math.floor(Math.random() * 1000),
+                                code: slug,
+                                isActive: true,
+                                brand: brand
+                            }
+                        });
+                        console.log(`✨ [SYNC] Created Mapped Category: ${catName} | ID: ${mappedCat.id}`);
+                        totalCategoriesCreated++;
+                    } catch (e) {
+                        console.error(`❌ Failed to create mapped category ${catName}`, e);
+                    }
+                }
+            }
+
+            // Fallback: Standard Lookup if not found via Mapping
+            if (!category) {
+                category = catMap.get(catKey);
+            }
 
             // If not found by direct name, try slugifying the name and checking
             if (!category) {
@@ -313,7 +369,7 @@ export const syncProducts = async (req: Request, res: Response) => {
                 }
             }
 
-            // Auto-Create Category if missing
+            // Auto-Create Category if missing (and not mapped)
             if (!category) {
                 try {
                     // Generate Slug
