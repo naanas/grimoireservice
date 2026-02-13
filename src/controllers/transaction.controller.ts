@@ -687,11 +687,24 @@ export const createTransaction = async (req: Request, res: Response) => {
 
             const paymentService = await import('../services/payment.service.js');
 
-            // Determine Gateway from ENV (Toggle)
-            // Use 'TRIPAY' or 'IPAYMU' based on .env configuration
-            // Default to 'IPAYMU' if not set, for safety/legacy compatibility
-            const envGateway = process.env.PAYMENT_GATEWAY || 'IPAYMU';
-            const gateway = envGateway.toUpperCase();
+            // Determine Gateway from DB (SystemConfig) or ENV (Fallback)
+            // Use 'TRIPAY' or 'IPAYMU' based on configuration
+            let gateway = 'IPAYMU'; // Default
+            try {
+                // Check DB first
+                const config = await prisma.systemConfig.findUnique({
+                    where: { key: 'PAYMENT_GATEWAY' }
+                });
+                if (config && config.value) {
+                    gateway = config.value.toUpperCase();
+                } else {
+                    // Fallback to ENV
+                    gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
+                }
+            } catch (e) {
+                // If DB fails, fallback to ENV
+                gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
+            }
 
             let finalChannel = paymentChannel || paymentMethod;
 

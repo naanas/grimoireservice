@@ -210,16 +210,8 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', uptime: process.uptime() });
 });
 
-// Config Endpoint (Payment Gateway Toggle)
-app.get('/api/config/payment', (req, res) => {
-    const gateway = process.env.PAYMENT_GATEWAY || 'IPAYMU'; // Default to IPAYMU if not set
-    res.json({
-        success: true,
-        data: {
-            gateway: gateway.toUpperCase() // 'TRIPAY' or 'IPAYMU'
-        }
-    });
-});
+import configRoutes from './routes/config.route.js';
+app.use('/api/config', configRoutes);
 
 import { PrismaClient } from '@prisma/client';
 
