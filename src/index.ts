@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4000;
 const io = new Server(httpServer, {
     cors: {
         origin: process.env.FRONTEND_URL || '*',
-        methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
         allowedHeaders: ['Content-Type', 'Authorization']
     }
 });
@@ -39,7 +39,7 @@ import { ChatService } from './services/chat.service.js';
 app.use(helmet());
 app.use(cors({
     origin: process.env.FRONTEND_URL || '*', // Restrict in production
-    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
