@@ -281,7 +281,7 @@ const startServer = async () => {
             } catch (error: any) {
                 logger.warn(`⚠️ [KEEP-ALIVE] Failed to ping Payment Service: ${error.message}`);
             }
-        }, 100000); // 14 Minutes
+        }, 60 * 1000); // 1 Minute
     }
 
 
