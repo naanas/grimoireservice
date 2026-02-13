@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma.js';
 // GET /api/config
 export const getConfig = async (req: Request, res: Response) => {
     try {
-        const configs = await prisma.systemConfig.findMany();
+        const configs = await (prisma as any).systemConfig.findMany();
         const configMap: Record<string, string> = {};
         configs.forEach((c: any) => {
             configMap[c.key] = c.value;
@@ -31,7 +31,7 @@ export const updateConfig = async (req: Request, res: Response) => {
             return res.status(400).json({ success: false, message: 'Key and Value required' });
         }
 
-        const config = await prisma.systemConfig.upsert({
+        const config = await (prisma as any).systemConfig.upsert({
             where: { key },
             update: { value },
             create: { key, value }

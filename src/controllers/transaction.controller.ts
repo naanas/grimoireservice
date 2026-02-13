@@ -692,7 +692,7 @@ export const createTransaction = async (req: Request, res: Response) => {
             let gateway = 'IPAYMU'; // Default
             try {
                 // Check DB first
-                const config = await prisma.systemConfig.findUnique({
+                const config = await (prisma as any).systemConfig.findUnique({
                     where: { key: 'PAYMENT_GATEWAY' }
                 });
                 if (config && config.value) {
