@@ -210,6 +210,17 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', uptime: process.uptime() });
 });
 
+// Config Endpoint (Payment Gateway Toggle)
+app.get('/api/config/payment', (req, res) => {
+    const gateway = process.env.PAYMENT_GATEWAY || 'IPAYMU'; // Default to IPAYMU if not set
+    res.json({
+        success: true,
+        data: {
+            gateway: gateway.toUpperCase() // 'TRIPAY' or 'IPAYMU'
+        }
+    });
+});
+
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -233,15 +244,8 @@ const startServer = async () => {
         logger.warn(`Game Provider: ${PROVIDER} (REAL API - Careful!)`);
     }
 
-    // Check Payment Gateway Config (Dynamic)
-    const paymentEnv = process.env.PAYMENT_ENV === 'PRODUCTION' ? 'PROD' : 'DEV';
-    const activeKey = process.env[`IPAYMU_API_KEY_${paymentEnv}`];
-
-    if (activeKey) {
-        logger.info(`Payment Gateway: CONNECTED (Ipaymu ${paymentEnv} Environment)`);
-    } else {
-        logger.warn(`Payment Gateway: MISSING API KEY for ${paymentEnv} environment! Check .env`);
-    }
+    // 3. Start Keep-Alive System (Wake Java Service)
+    // Legacy Payment Check removed as we now use Java Payment Service
 
     // 3. Start Keep-Alive System (Wake Java Service)
     const JAVA_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL;

@@ -7,6 +7,47 @@ import * as crypto from 'crypto'; // Added for VIP callback signature validation
 
 // --- HELPER FUNCTIONS ---
 
+export const handleTripayCallback = async (req: Request, res: Response) => {
+    // Tripay Callback Handler
+    const callbackSignature = req.headers['x-callback-signature'];
+    const event = req.headers['x-callback-event']; // e.g. 'payment_status'
+
+    console.log(`🔔 [TRIPAY-CALLBACK] Event: ${event} | Ref: ${req.body.merchant_ref}`);
+
+    if (event !== 'payment_status') {
+        return res.json({ success: true }); // Ignore other events
+    }
+
+    try {
+        // Validate Signature (Optional but recommended)
+        // const privateKey = process.env.TRIPAY_PRIVATE_KEY;
+        // const signature = crypto.createHmac('sha256', privateKey).update(JSON.stringify(req.body)).digest('hex');
+        // if (signature !== callbackSignature) return res.status(400).json({ success: false, message: 'Invalid Signature' });
+
+        const { merchant_ref, status } = req.body;
+
+        // Map Status
+        // Tripay: UNPAID, PAIDO, FAILED, EXPIRED, REFUND
+        let newStatus = 'PENDING';
+        if (status === 'PAID') newStatus = 'SUCCESS';
+        else if (status === 'FAILED' || status === 'EXPIRED') newStatus = 'FAILED';
+
+        if (newStatus === 'SUCCESS') {
+            await processGameTopup(merchant_ref);
+        } else if (newStatus === 'FAILED') {
+            await prisma.transaction.update({
+                where: { id: merchant_ref },
+                data: { status: 'FAILED', providerStatus: `TRIPAY_${status}` }
+            });
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Tripay Callback Error:", error);
+        res.status(500).json({ success: false });
+    }
+};
+
 /**
  * Process Game Topup (Trigger Provider)
  * Use this to fulfill the order after payment is confirmed (Balance or Gateway).
@@ -646,25 +687,48 @@ export const createTransaction = async (req: Request, res: Response) => {
 
             const paymentService = await import('../services/payment.service.js');
 
-            // Simple Router Logic (Can be improved)
-            // If paymentChannel contains 'tripay', use TRIPAY. Else IPAYMU?
-            // Or default IPAYMU for now to match old behavior logic?
-            // Let's force TRIPAY for everything EXCEPT specific legacy ones?
-            // Actually, let's just pass IPAYMU for now since that's what was working, 
-            // and we enabled Tripay as a NEW option.
+            // Determine Gateway from ENV (Toggle)
+            // Use 'TRIPAY' or 'IPAYMU' based on .env configuration
+            // Default to 'IPAYMU' if not set, for safety/legacy compatibility
+            const envGateway = process.env.PAYMENT_GATEWAY || 'IPAYMU';
+            const gateway = envGateway.toUpperCase();
 
-            // To support both, we need Frontend to tell us, or we decide.
-            // Let's assume `paymentMethod` field from Frontend is used to decide?
-            // Currently Frontend sends `paymentMethod` (e.g. 'QRIS') and `paymentChannel` (e.g. 'qris').
+            let finalChannel = paymentChannel || paymentMethod;
 
-            // TEMP SOLUTION: Use IPAYMU by default to maintain stability, unless explicitly TRIPAY.
-            const gateway = (req.body.provider === 'TRIPAY') ? 'TRIPAY' : 'IPAYMU';
+            // Channel Mapping (Node -> Java Service)
+            // Frontend sends lowercase codes (e.g. 'bca', 'qris')
+            if (gateway === 'TRIPAY') {
+                const map: any = {
+                    'bca': 'BCAVA',
+                    'mandiri': 'MANDIRIVA',
+                    'bni': 'BNIVA',
+                    'bri': 'BRIVA',
+                    'cimb': 'CIMBVA',
+                    'permata': 'PERMATAVA',
+                    'alfamart': 'ALFAMART',
+                    'indomaret': 'INDOMARET',
+                    'qris': 'QRIS',
+                    'dana': 'DANA',
+                    'ovo': 'OVO',
+                    'shopeepay': 'SHOPEEPAY'
+                };
+                if (map[finalChannel]) finalChannel = map[finalChannel];
+                else finalChannel = finalChannel.toUpperCase(); // Fallback
+            } else if (gateway === 'IPAYMU') {
+                // Java IpaymuGateway expects 'va_' prefix for Virtual Accounts
+                const vaList = ['bca', 'mandiri', 'bni', 'bri', 'cimb', 'permata', 'danamon'];
+                if (vaList.includes(finalChannel)) {
+                    finalChannel = `va_${finalChannel}`;
+                }
+            }
+
+            console.log(`🔌 [GATEWAY] Using ${gateway} for Channel: ${finalChannel} (Original: ${paymentChannel})`);
 
             const payment = await paymentService.createPayment(
                 trxId,
-                amount,
+                totalPayable, // Use Final Amount + Fee
                 gateway, // 'TRIPAY' | 'IPAYMU'
-                paymentChannel || paymentMethod, // 'QRIS', 'BCAVA', etc.
+                finalChannel, // 'QRIS', 'BCAVA', etc.
                 trxId, // BuyerName (Anon)
                 'guest@grimoire.com',
                 targetPhone || '08123456789',
@@ -744,11 +808,35 @@ export const createDeposit = async (req: Request, res: Response) => {
         }
 
         const paymentService = await import('../services/payment.service.js');
+
+        // Determine Gateway from ENV
+        const envGateway = process.env.PAYMENT_GATEWAY || 'IPAYMU';
+        const gateway = envGateway.toUpperCase();
+
+        let finalChannel = paymentMethod; // e.g. 'VA_BCA'
+
+        // Channel Logic for Deposit (Assume Frontend sends correct codes or same mapping needed?)
+        // Frontend likely sends 'va_bca' or 'qris'. 
+        // If Tripay, we might need to map 'va_bca' -> 'BCAVA'.
+        if (gateway === 'TRIPAY') {
+            const map: any = {
+                'va_bca': 'BCAVA',
+                'va_mandiri': 'MANDIRIVA',
+                'va_bni': 'BNIVA',
+                'va_bri': 'BRIVA',
+                'va_cimb': 'CIMBVA',
+                'va_permata': 'PERMATAVA',
+                'qris': 'QRIS'
+            };
+            if (map[finalChannel]) finalChannel = map[finalChannel];
+            else finalChannel = finalChannel.toUpperCase().replace('VA_', '') + 'VA'; // Try heuristic
+        }
+
         const payment = await paymentService.createPayment(
             trxId,
             Number(amount),
-            'IPAYMU', // Default Deposit to Ipaymu for now, or make specific
-            paymentMethod, // e.g. 'VA_BCA'
+            gateway,
+            finalChannel,
             user.name || 'User',
             user.email,
             user.phoneNumber || '08123456789',

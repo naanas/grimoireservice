@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createTransaction, getProducts, handleIpaymuCallback, handleVipCallback, getTransaction, getCategories, getCategoryBySlug, createDeposit, getHistory, checkGameId, getVendorProducts, checkTransactionStatus, getBestSellingCategories, getPopularCategories } from '../controllers/transaction.controller.js';
+import { createTransaction, getProducts, handleIpaymuCallback, handleTripayCallback, handleVipCallback, getTransaction, getCategories, getCategoryBySlug, createDeposit, getHistory, checkGameId, getVendorProducts, checkTransactionStatus, getBestSellingCategories, getPopularCategories } from '../controllers/transaction.controller.js';
 import { authenticateToken } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { createTransactionSchema, createDepositSchema } from '../schemas/transaction.schema.js';
@@ -20,6 +20,7 @@ router.post('/check-id', validate(checkGameIdSchema), checkGameId); // Public
 router.get('/vendor-products', getVendorProducts);
 router.post('/check-status/:id', checkTransactionStatus);
 router.post('/callback/ipaymu', handleIpaymuCallback);
+router.post('/callback/tripay', handleTripayCallback);
 router.post('/callback/vip', handleVipCallback);
 
 export default router;
