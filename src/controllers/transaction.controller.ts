@@ -30,7 +30,7 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
         // Tripay: UNPAID, PAIDO, FAILED, EXPIRED, REFUND
         let newStatus = 'PENDING';
         if (status === 'PAID') newStatus = 'SUCCESS';
-        else if (status === 'FAILED' || status === 'EXPIRED') newStatus = 'FAILED';
+        else if (status === 'FAILED' || status === 'EXPIRED' || status === 'REFUND') newStatus = 'FAILED';
 
         if (newStatus === 'SUCCESS') {
             await processGameTopup(merchant_ref);
