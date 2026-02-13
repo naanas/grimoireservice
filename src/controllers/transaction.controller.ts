@@ -727,7 +727,7 @@ export const createTransaction = async (req: Request, res: Response) => {
             const payment = await paymentService.createPayment(
                 trxId,
                 totalPayable, // Use Final Amount + Fee
-                gateway, // 'TRIPAY' | 'IPAYMU'
+                gateway as 'TRIPAY' | 'IPAYMU', // 'TRIPAY' | 'IPAYMU'
                 finalChannel, // 'QRIS', 'BCAVA', etc.
                 trxId, // BuyerName (Anon)
                 'guest@grimoire.com',
@@ -835,7 +835,7 @@ export const createDeposit = async (req: Request, res: Response) => {
         const payment = await paymentService.createPayment(
             trxId,
             Number(amount),
-            gateway,
+            gateway as 'TRIPAY' | 'IPAYMU',
             finalChannel,
             user.name || 'User',
             user.email,
