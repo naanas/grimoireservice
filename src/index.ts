@@ -265,6 +265,26 @@ const startServer = async () => {
         }, 100000);
     }
 
+    // --- KEEP ALIVE MECHANISM (PAYMENT SERVICE) ---
+    // Ping Java Payment Service every 14 minutes to prevent Render sleep
+    const PAYMENT_SERVICE_URL = process.env.PAYMENT_SERVICE_URL || 'http://localhost:8080';
+
+    if (PAYMENT_SERVICE_URL) {
+        setInterval(async () => {
+            try {
+                // Ensure we hit the /ping endpoint
+                const targetUrl = PAYMENT_SERVICE_URL.endsWith('/') ? `${PAYMENT_SERVICE_URL}ping` : `${PAYMENT_SERVICE_URL}/ping`;
+
+                logger.info(`⏰ [KEEP-ALIVE] Pinging Payment Service at ${targetUrl}...`);
+                await axios.get(targetUrl);
+                logger.info('✅ [KEEP-ALIVE] Payment Service is awake.');
+            } catch (error: any) {
+                logger.warn(`⚠️ [KEEP-ALIVE] Failed to ping Payment Service: ${error.message}`);
+            }
+        }, 14 * 60 * 1000); // 14 Minutes
+    }
+
+
     // Use httpServer instead of app.listen
     httpServer.listen(PORT, () => {
         logger.info(`Server running on port ${PORT} (with Socket.IO)`);
