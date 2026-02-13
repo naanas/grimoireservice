@@ -573,15 +573,11 @@ export const createTransaction = async (req: Request, res: Response) => {
 
 
         } else {
-            // B. GATEWAY PAYMENT (IPAYMU)
-            let trxId = `MOCK_TRX_${Date.now()}`;
-
+            // B. GATEWAY PAYMENT (TRIPAY / IPAYMU) -> Handled by Java Service
             // Resolve User for History Linking
-            // If logged in, use their ID
             let userIdForTrx = authUserId;
             let targetPhone = guestContact;
 
-            // Attempt to resolve from Token if not passed explicitly
             if (!userIdForTrx && req.headers.authorization) {
                 try {
                     const token = req.headers.authorization.split(' ')[1];
@@ -592,7 +588,6 @@ export const createTransaction = async (req: Request, res: Response) => {
                 } catch (e) { }
             }
 
-            // If we have ID, try to get Phone from DB if guestContact missing
             if (userIdForTrx && !targetPhone) {
                 try {
                     const u = await prisma.user.findUnique({ where: { id: userIdForTrx } });
@@ -600,13 +595,14 @@ export const createTransaction = async (req: Request, res: Response) => {
                 } catch (e) { }
             }
 
-            // Create Pending Transaction
+            // Create Pending Transaction in DB First
+            let trxId = `TRX-${Date.now()}`;
             try {
                 const trx = await prisma.transaction.create({
                     data: {
                         invoice,
                         productId,
-                        targetId: userId,
+                        targetId: userId, // Game User ID
                         zoneId,
                         amount: totalPayable, // Store TOTAL including fee
                         discountAmount,
@@ -621,87 +617,91 @@ export const createTransaction = async (req: Request, res: Response) => {
                 trxId = trx.id;
             } catch (dbError) {
                 console.warn("DB Transaction Create Failed:", dbError);
+                return res.status(500).json({ success: false, message: "Database Error" });
             }
 
-            // Init Ipaymu
-            const returnPath = `/order/${product.category.slug}`;
+            // Call Java Payment Service
+            // Determine Method Logic:
+            // Input `paymentMethod`: "TRIPAY", "IPAYMU", "QRIS", "VA_BCA"? 
+            // The frontend usually sends specific method info.
+            // Setup: 
+            // - Logic: If paymentMethod is generic (e.g. 'VA', 'QRIS') we need to know WHICH PROVDER to use.
+            // - Start with: All 'QRIS' -> Tripay? Or Ipaymu? 
+            // - User decided: Tripay + Migrate Ipaymu.
+            // - Let's assume frontend sends Provider explicitly OR we map it.
+            // - Current Frontend sends "QRIS", "VA_BCA", etc. (derived from channel).
+            // - Let's Default to Tripay for new stuff, Use Ipaymu for legacy? 
+            // - User wants "Ipaymu pindah juga". So Java handles both.
+            // - We need to tell Java WHICH ONE. 
+            // - Let's Map: "TRIPAY" or "IPAYMU" as `method` arg to Java.
+            // - How do we know? Maybe add config/env? Or frontend sends it?
+            // - For now: Let's assume we pass "TRIPAY" as default, or check a flag.
 
-            let payment: any;
-            if (paymentChannel) {
-                // Direct Payment (Embedded)
-                payment = await ipaymuService.directPayment(
-                    trxId,
-                    totalPayable, // Send Total
-                    'Guest',
-                    'guest@grimoire.com',
-                    targetPhone || '08123456789',
-                    paymentMethod,
-                    paymentChannel
-                );
-            } else {
-                // Redirect Payment (Legacy/Fallback)
-                payment = await ipaymuService.initPayment(trxId, totalPayable, 'Guest', 'guest@grimoire.com', paymentMethod, returnPath);
-            }
+            // FIXME: Hardcoded selection or derived?
+            // "satu project sama tripay". 
+            // Let's use IPAYMU for existing Ipaymu Channels if we can distinguish.
+            // OR change all to Tripay? 
+            // User: "yang ipaymu pindah juga bisa gga?". Meaning KEEP Ipaymu but in Java.
+            // So we need to Select based on Channel.
 
-            if (!payment.success) {
-                return res.status(500).json({ success: false, message: payment.message || 'Payment Error' });
-            }
+            const paymentService = await import('../services/payment.service.js');
 
-            // Update with Payment URL or Direct Data
-            if (payment.data && !trxId.startsWith('MOCK')) {
-                const updateData: any = {
-                    paymentTrxId: String(payment.data.TransactionId || payment.data.SessionID)
-                };
+            // Simple Router Logic (Can be improved)
+            // If paymentChannel contains 'tripay', use TRIPAY. Else IPAYMU?
+            // Or default IPAYMU for now to match old behavior logic?
+            // Let's force TRIPAY for everything EXCEPT specific legacy ones?
+            // Actually, let's just pass IPAYMU for now since that's what was working, 
+            // and we enabled Tripay as a NEW option.
 
-                // Store Redirect URL if available (Direct also returns it sometimes for CC)
-                if (payment.data.Url) updateData.paymentUrl = payment.data.Url;
+            // To support both, we need Frontend to tell us, or we decide.
+            // Let's assume `paymentMethod` field from Frontend is used to decide?
+            // Currently Frontend sends `paymentMethod` (e.g. 'QRIS') and `paymentChannel` (e.g. 'qris').
 
-                // Store Direct Payment Info (VA No, Code, etc) to display on Frontend
-                if (payment.data.PaymentNo) updateData.paymentNo = payment.data.PaymentNo;
-                if (payment.data.PaymentName) updateData.paymentChannel = payment.data.PaymentName; // e.g. "BCA Virtual Account"
+            // TEMP SOLUTION: Use IPAYMU by default to maintain stability, unless explicitly TRIPAY.
+            const gateway = (req.body.provider === 'TRIPAY') ? 'TRIPAY' : 'IPAYMU';
 
-                // For QRIS Direct, usually returns QrString or QrImage
-                // We might need a field for QrString if we want to render it ourselves
-                // Schema update might be needed if we don't have a place for it.
-                // For now, let's assume `paymentNo` can hold the QR string if it's long enough, 
-                // OR just rely on paymentUrl for QRIS if Direct doesn't give raw string easily?
-                // Direct Payment for QRIS usually gives `QrString` or `QrImage`.
-                // Let's check schema. If needed we can stick it in `paymentNo` or `sn`(abuse?)
-                // Actually `paymentNo` is string?, so it fits.
-                if (payment.data.QrString) updateData.paymentNo = payment.data.QrString;
+            const payment = await paymentService.createPayment(
+                trxId,
+                amount,
+                gateway, // 'TRIPAY' | 'IPAYMU'
+                paymentChannel || paymentMethod, // 'QRIS', 'BCAVA', etc.
+                trxId, // BuyerName (Anon)
+                'guest@grimoire.com',
+                targetPhone || '08123456789',
+                product.name
+            );
 
+            // Update Transaction with Result
+            if (payment.success) {
                 await prisma.transaction.update({
                     where: { id: trxId },
-                    data: updateData
+                    data: {
+                        paymentUrl: payment.paymentUrl,
+                        paymentTrxId: payment.paymentTrxId,
+                        paymentNo: payment.paymentNo,
+                        paymentChannel: payment.paymentName // standardized name
+                    }
                 });
+
+                // Response
+                res.json({
+                    success: true,
+                    data: {
+                        id: trxId,
+                        invoice,
+                        paymentUrl: payment.paymentUrl,
+                        paymentNo: payment.paymentNo,
+                        paymentName: payment.paymentName,
+                        expired: payment.expiredTime,
+                        productName: product.name,
+                        amount
+                    }
+                });
+            } else {
+                // Return Error
+                res.status(400).json({ success: false, message: payment.message });
             }
 
-            // Send WA Invoice
-            if (targetPhone) {
-                console.log(`🚀 [WA] Sending Invoice to ${targetPhone}`);
-                // Modify WA message based on type
-                let payLinkOrCode = payment.data?.Url || 'Cek Website';
-                if (paymentChannel) {
-                    payLinkOrCode = `Kode Bayar: *${payment.data.PaymentNo || payment.data.QrString || '-'}*`;
-                }
-
-                const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n📋 *TAGIHAN BARU*\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\n${payLinkOrCode}\n---------------------------\nSistem otomatis membatalkan jika tidak dibayar dalam 24 jam.`;
-                whatsappService.sendMessage(targetPhone, waMsg).catch(err => console.error("WA Error:", err));
-            }
-
-            res.json({
-                success: true,
-                data: {
-                    id: trxId,
-                    invoice,
-                    paymentUrl: payment.data?.Url,
-                    paymentNo: payment.data?.PaymentNo || payment.data?.QrString, // Send to Frontend
-                    paymentName: payment.data?.PaymentName || payment.data?.Channel,
-                    expired: payment.data?.Expired,
-                    productName: product.name,
-                    amount: totalPayable
-                }
-            });
         }
 
     } catch (error: any) {
@@ -710,6 +710,7 @@ export const createTransaction = async (req: Request, res: Response) => {
     }
 };
 
+// POST /api/transaction/deposit
 // POST /api/transaction/deposit
 export const createDeposit = async (req: Request, res: Response) => {
     // PROTECTED ROUTE
@@ -723,7 +724,7 @@ export const createDeposit = async (req: Request, res: Response) => {
         if (!user) return res.status(404).json({ success: false, message: 'User Not Found' });
 
         const invoice = `DEP-${Date.now()}`;
-        let trxId = `MOCK_DEP_${Date.now()}`;
+        let trxId = `TRX_DEP_${Date.now()}`; // Consistent ID format
 
         try {
             const trx = await prisma.transaction.create({
@@ -742,29 +743,40 @@ export const createDeposit = async (req: Request, res: Response) => {
             return res.status(500).json({ success: false, message: `Database Error: ${dbError.message}` });
         }
 
-        const returnPath = `/history`;
-        const payment = await ipaymuService.initPayment(trxId, Number(amount), user.name || 'User', user.email, paymentMethod, returnPath);
+        const paymentService = await import('../services/payment.service.js');
+        const payment = await paymentService.createPayment(
+            trxId,
+            Number(amount),
+            'IPAYMU', // Default Deposit to Ipaymu for now, or make specific
+            paymentMethod, // e.g. 'VA_BCA'
+            user.name || 'User',
+            user.email,
+            user.phoneNumber || '08123456789',
+            'Deposit Saldo'
+        );
 
         if (!payment.success) {
             await prisma.transaction.update({ where: { id: trxId }, data: { status: 'FAILED' } });
             return res.status(500).json({ success: false, message: payment.message || 'Payment Error' });
         }
 
-        if (payment.data) {
-            await prisma.transaction.update({
-                where: { id: trxId },
-                data: {
-                    paymentUrl: payment.data.Url,
-                    paymentTrxId: payment.data.TransactionId
-                }
-            });
-        }
+        // Update DB
+        await prisma.transaction.update({
+            where: { id: trxId },
+            data: {
+                paymentUrl: payment.paymentUrl,
+                paymentTrxId: payment.paymentTrxId,
+                paymentNo: payment.paymentNo,
+                paymentChannel: payment.paymentName
+            }
+        });
 
         res.json({
             success: true,
             data: {
                 invoice,
-                paymentUrl: payment.data?.Url,
+                paymentUrl: payment.paymentUrl,
+                paymentNo: payment.paymentNo,
                 amount
             }
         });
