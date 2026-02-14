@@ -688,19 +688,48 @@ export const createTransaction = async (req: Request, res: Response) => {
             const paymentService = await import('../services/payment.service.js');
 
             // Determine Gateway from DB (SystemConfig) or ENV (Fallback)
-            // Use 'TRIPAY' or 'IPAYMU' based on configuration
             let gateway = 'IPAYMU'; // Default
+            let tripayConfig = {
+                mode: 'PRODUCTION', // Default
+                apiKey: '',
+                privateKey: '',
+                merchantCode: ''
+            };
+
             try {
-                // Check DB first
-                const config = await (prisma as any).systemConfig.findUnique({
-                    where: { key: 'PAYMENT_GATEWAY' }
+                // Fetch All Configs at once to minimize DB calls
+                const configs = await (prisma as any).systemConfig.findMany({
+                    where: {
+                        key: { in: ['PAYMENT_GATEWAY', 'TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_SB_MERCHANT_CODE', 'TRIPAY_PROD_API_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_PROD_MERCHANT_CODE'] }
+                    }
                 });
-                if (config && config.value) {
-                    gateway = config.value.toUpperCase();
+
+                const configMap: Record<string, string> = {};
+                configs.forEach((c: any) => configMap[c.key] = c.value);
+
+                // 1. Gateway Selection
+                if (configMap['PAYMENT_GATEWAY']) {
+                    gateway = configMap['PAYMENT_GATEWAY'].toUpperCase();
                 } else {
-                    // Fallback to ENV
                     gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
                 }
+
+                // 2. Tripay Config Selection
+                if (gateway === 'TRIPAY') {
+                    const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                    tripayConfig.mode = mode;
+
+                    if (mode === 'SANDBOX') {
+                        tripayConfig.apiKey = configMap['TRIPAY_SB_API_KEY'] || '';
+                        tripayConfig.privateKey = configMap['TRIPAY_SB_PRIVATE_KEY'] || '';
+                        tripayConfig.merchantCode = configMap['TRIPAY_SB_MERCHANT_CODE'] || '';
+                    } else {
+                        tripayConfig.apiKey = configMap['TRIPAY_PROD_API_KEY'] || '';
+                        tripayConfig.privateKey = configMap['TRIPAY_PROD_PRIVATE_KEY'] || '';
+                        tripayConfig.merchantCode = configMap['TRIPAY_PROD_MERCHANT_CODE'] || '';
+                    }
+                }
+
             } catch (e) {
                 // If DB fails, fallback to ENV
                 gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
@@ -737,7 +766,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                 }
             }
 
-            console.log(`🔌 [GATEWAY] Using ${gateway} for Channel: ${finalChannel} (Original: ${paymentChannel})`);
+            console.log(`🔌 [GATEWAY] Using ${gateway} (${tripayConfig.mode}) for Channel: ${finalChannel} (Original: ${paymentChannel})`);
 
             const payment = await paymentService.createPayment(
                 trxId,
@@ -747,7 +776,12 @@ export const createTransaction = async (req: Request, res: Response) => {
                 trxId, // BuyerName (Anon)
                 'guest@grimoire.com',
                 targetPhone || '08123456789',
-                product.name
+                product.name,
+                // Pass Credentials
+                tripayConfig.apiKey,
+                tripayConfig.privateKey,
+                tripayConfig.merchantCode,
+                tripayConfig.mode
             );
 
             // Update Transaction with Result

@@ -1,29 +1,47 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 
-// GET /api/config
+// GET /api/config (Public - Filtered)
 export const getConfig = async (req: Request, res: Response) => {
     try {
         const configMap: Record<string, string> = {};
 
-        // Fallback check if prisma.systemConfig is not generated yet
         if ((prisma as any).systemConfig) {
             const configs = await (prisma as any).systemConfig.findMany();
             configs.forEach((c: any) => {
-                configMap[c.key] = c.value;
+                // Filter out sensitive keys
+                const key = c.key.toUpperCase();
+                if (!key.includes('KEY') && !key.includes('SECRET') && !key.includes('PASSWORD') && !key.includes('PRIVATE') && !key.includes('CODE')) {
+                    configMap[c.key] = c.value;
+                }
             });
-        } else {
-            console.warn("⚠️ SystemConfig model not found in Prisma Client. Using ENV fallbacks.");
         }
 
-        // Return default if not set
+        // Public Defaults
         if (!configMap['PAYMENT_GATEWAY']) {
             configMap['PAYMENT_GATEWAY'] = process.env.PAYMENT_GATEWAY || 'IPAYMU';
         }
 
         res.json({ success: true, data: configMap });
     } catch (error: any) {
-        console.error("Get Config Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// GET /api/config/all (Admin Only)
+export const getAllConfig = async (req: Request, res: Response) => {
+    try {
+        const configMap: Record<string, string> = {};
+
+        if ((prisma as any).systemConfig) {
+            const configs = await (prisma as any).systemConfig.findMany();
+            configs.forEach((c: any) => {
+                configMap[c.key] = c.value;
+            });
+        }
+
+        res.json({ success: true, data: configMap });
+    } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
     }
 };

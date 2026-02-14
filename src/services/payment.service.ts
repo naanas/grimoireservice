@@ -12,11 +12,16 @@ export const createPayment = async (
     buyerName: string,
     buyerEmail: string,
     buyerPhone: string,
-    productName: string
+    productName: string,
+    // Optional Credentials
+    tripayApiKey?: string,
+    tripayPrivateKey?: string,
+    tripayMerchantCode?: string,
+    tripayMode?: string
 ) => {
     try {
         console.log(`[PAYMENT-SERVICE] Creating ${method} transaction for ${trxId}`);
-        const response = await axios.post(`${PAYMENT_SERVICE_URL}/api/payment/create`, {
+        const payload: any = {
             transactionId: trxId,
             amount: amount,
             method: method,
@@ -24,8 +29,15 @@ export const createPayment = async (
             buyerName: buyerName,
             buyerEmail: buyerEmail,
             buyerPhone: buyerPhone,
-            productName: productName
-        });
+            productName: productName,
+            // Pass Credentials if present
+            tripayApiKey,
+            tripayPrivateKey,
+            tripayMerchantCode,
+            tripayMode
+        };
+
+        const response = await axios.post(`${PAYMENT_SERVICE_URL}/api/payment/create`, payload);
 
         return response.data;
     } catch (error: any) {
