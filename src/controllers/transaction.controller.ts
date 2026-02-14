@@ -700,7 +700,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                         // We usually want the 'total_fee.merchant' if we markup, 
                         // or just use whatever they say the 'total_fee.customer' is if passed to customer.
                         // Here we take 'total_fee.merchant' as the baseline admin fee.
-                        adminFee = feeRes.data.data[0].total_fee.merchant || getLocalFee(paymentMethod, paymentChannel, finalAmount);
+                        adminFee = feeRes.data.data[0].total_fee.customer || getLocalFee(paymentMethod, paymentChannel, finalAmount);
                         console.log(`📡 [TRIPAY-FEE] Real-time Sync: Rp${adminFee} for ${tripayChannel}`);
                     } else {
                         adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount);
