@@ -17,7 +17,9 @@ export const createPayment = async (
     tripayApiKey?: string,
     tripayPrivateKey?: string,
     tripayMerchantCode?: string,
-    tripayMode?: string
+    tripayMode?: string,
+    basePrice?: number,
+    adminFee?: number
 ) => {
     try {
         console.log(`[PAYMENT-SERVICE] Creating ${method} transaction for ${trxId}`);
@@ -34,7 +36,9 @@ export const createPayment = async (
             tripayApiKey,
             tripayPrivateKey,
             tripayMerchantCode,
-            tripayMode
+            tripayMode,
+            basePrice,
+            adminFee
         };
 
         const response = await axios.post(`${PAYMENT_SERVICE_URL}/api/payment/create`, payload, {

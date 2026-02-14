@@ -632,16 +632,19 @@ export const retryTransaction = async (req: Request, res: Response) => {
                 const baseUrl = mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
 
                 try {
-                    const response = await axios.get(`${baseUrl}/transaction/detail`, {
+                    const response = await axios.get(`${baseUrl}/transaction/check-status`, {
                         params: { reference: trx.paymentTrxId },
-                        headers: { 'Authorization': `Bearer ${apiKey}` }
+                        headers: { 'Authorization': `Bearer ${apiKey}` },
+                        validateStatus: (status) => status < 999
                     });
-                    const data = response.data?.data;
-                    if (data && (data.status === 'PAID' || data.status === 'SETTLEMENT')) {
+
+                    const data = response.data;
+                    // Tripay Check Status returns { success: true, message: "Status transaksi saat ini PAID" }
+                    if (data?.success && data.message?.includes('PAID')) {
                         payCheck = { success: true, status: 6, statusDesc: 'Berhasil' };
                     }
                 } catch (err: any) {
-                    console.error(`❌ [TRIPAY] Check Error:`, err.response?.data || err.message);
+                    console.error(`❌ [TRIPAY] Check Status Error:`, err.response?.data || err.message);
                 }
             }
 

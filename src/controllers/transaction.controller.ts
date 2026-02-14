@@ -587,7 +587,8 @@ export const createTransaction = async (req: Request, res: Response) => {
 
         // 2. Prepare Transaction Data
         const invoice = `GRM-${Date.now()}`;
-        let amount = product.price_sell;
+        const amount = product.price_sell;
+        const basePrice = amount;
         let discountAmount = 0;
         const validVoucherCode = req.body.voucherCode;
 
@@ -823,10 +824,11 @@ export const createTransaction = async (req: Request, res: Response) => {
                 } catch (e) { }
             }
 
-            if (userIdForTrx && !targetPhone) {
+            let activeUser: any = null;
+            if (userIdForTrx) {
                 try {
-                    const u = await prisma.user.findUnique({ where: { id: userIdForTrx } });
-                    if (u && u.phoneNumber) targetPhone = u.phoneNumber;
+                    activeUser = await prisma.user.findUnique({ where: { id: userIdForTrx } });
+                    if (activeUser && activeUser.phoneNumber) targetPhone = activeUser.phoneNumber;
                 } catch (e) { }
             }
 
@@ -903,14 +905,16 @@ export const createTransaction = async (req: Request, res: Response) => {
                 totalPayable,
                 gateway as 'TRIPAY' | 'IPAYMU',
                 finalChannel,
-                trxId,
-                'guest@grimoire.com',
+                activeUser?.name || 'Guest',
+                activeUser?.email || 'guest@grimoire.com',
                 targetPhone || '08123456789',
                 product.name,
                 tripayConfig.apiKey,
                 tripayConfig.privateKey,
                 tripayConfig.merchantCode,
-                tripayConfig.mode
+                tripayConfig.mode,
+                basePrice,
+                adminFee
             );
 
             // Update Transaction with Result
@@ -1271,18 +1275,20 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                     const baseUrl = mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
 
                     try {
-                        const response = await axios.get(`${baseUrl}/transaction/detail`, {
+                        const response = await axios.get(`${baseUrl}/transaction/check-status`, {
                             params: { reference: trx.paymentTrxId },
-                            headers: { 'Authorization': `Bearer ${apiKey}` }
+                            headers: { 'Authorization': `Bearer ${apiKey}` },
+                            validateStatus: (status) => status < 999
                         });
-                        const data = response.data?.data;
-                        if (data && (data.status === 'PAID' || data.status === 'SETTLEMENT')) {
+
+                        const data = response.data;
+                        if (data?.success && data.message?.includes('PAID')) {
                             payCheck = { success: true, status: 6, statusDesc: 'Berhasil' };
                         } else {
-                            console.log(`ℹ️ [TRIPAY] Status is still: ${data?.status}`);
+                            console.log(`ℹ️ [TRIPAY] Status check: ${data?.message}`);
                         }
                     } catch (err: any) {
-                        console.error(`❌ [TRIPAY] Check Error:`, err.response?.data || err.message);
+                        console.error(`❌ [TRIPAY] Check Status Error:`, err.response?.data || err.message);
                     }
                 }
 
