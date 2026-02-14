@@ -285,7 +285,7 @@ export const getPopularCategories = async (req: Request, res: Response) => {
         const result: any[] = await prisma.$queryRaw`
              SELECT 
                 MIN(c.id) as id, 
-                COALESCE(c.brand, c.name) as name, 
+                COALESCE(c."brand", c.name) as name, 
                 MIN(c.slug) as slug, 
                 MIN(c.image) as image, 
                 COUNT(t.id) as trend_score
@@ -293,7 +293,7 @@ export const getPopularCategories = async (req: Request, res: Response) => {
             JOIN products p ON t."productId" = p.id
             JOIN categories c ON p."categoryId" = c.id
             WHERE t.status = 'SUCCESS' AND t."createdAt" >= ${sevenDaysAgo}
-            GROUP BY COALESCE(c.brand, c.name)
+            GROUP BY COALESCE(c."brand", c.name)
             ORDER BY trend_score DESC
             LIMIT 10
         `;
