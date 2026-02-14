@@ -4,11 +4,17 @@ import { prisma } from '../lib/prisma.js';
 // GET /api/config
 export const getConfig = async (req: Request, res: Response) => {
     try {
-        const configs = await (prisma as any).systemConfig.findMany();
         const configMap: Record<string, string> = {};
-        configs.forEach((c: any) => {
-            configMap[c.key] = c.value;
-        });
+
+        // Fallback check if prisma.systemConfig is not generated yet
+        if ((prisma as any).systemConfig) {
+            const configs = await (prisma as any).systemConfig.findMany();
+            configs.forEach((c: any) => {
+                configMap[c.key] = c.value;
+            });
+        } else {
+            console.warn("⚠️ SystemConfig model not found in Prisma Client. Using ENV fallbacks.");
+        }
 
         // Return default if not set
         if (!configMap['PAYMENT_GATEWAY']) {
@@ -29,6 +35,13 @@ export const updateConfig = async (req: Request, res: Response) => {
 
         if (!key || !value) {
             return res.status(400).json({ success: false, message: 'Key and Value required' });
+        }
+
+        if (!(prisma as any).systemConfig) {
+            return res.status(503).json({
+                success: false,
+                message: 'SystemConfig model not ready. Please run "npx prisma generate" in backend folder.'
+            });
         }
 
         const config = await (prisma as any).systemConfig.upsert({
