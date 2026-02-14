@@ -728,10 +728,12 @@ export const createTransaction = async (req: Request, res: Response) => {
                 if (map[finalChannel]) finalChannel = map[finalChannel];
                 else finalChannel = finalChannel.toUpperCase(); // Fallback
             } else if (gateway === 'IPAYMU') {
-                // Java IpaymuGateway expects 'va_' prefix for Virtual Accounts
+                // Java IpaymuGateway handles mapping, but we can ensure clean codes here
                 const vaList = ['bca', 'mandiri', 'bni', 'bri', 'cimb', 'permata', 'danamon'];
                 if (vaList.includes(finalChannel)) {
-                    finalChannel = `va_${finalChannel}`;
+                    // Just send 'bca', 'mandiri' etc. Java will handle it.
+                    // But if it already has va_ prefix, keep it or normalize.
+                    finalChannel = finalChannel.replace('va_', '');
                 }
             }
 
