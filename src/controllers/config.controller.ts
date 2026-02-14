@@ -54,6 +54,7 @@ export const updateConfig = async (req: Request, res: Response) => {
         if (!key) {
             return res.status(400).json({ success: false, message: 'Key is required' });
         }
+        // Removed `if (!value)` check to allow empty string values
 
         if (!(prisma as any).systemConfig) {
             return res.status(503).json({
