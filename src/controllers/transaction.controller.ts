@@ -1254,8 +1254,12 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
             if (trx.paymentTrxId) {
                 let payCheck: any = { success: false };
 
-                // Determine Gateway
-                const gateway = (trx as any).paymentGateway || 'IPAYMU'; // Fallback for older records
+                // Determine Gateway from Transaction or System Config
+                let gateway = (trx as any).paymentGateway;
+                if (!gateway) {
+                    const cfg = await (prisma as any).systemConfig.findUnique({ where: { key: 'PAYMENT_GATEWAY' } });
+                    gateway = cfg?.value || 'TRIPAY'; // Use Config Default
+                }
 
                 if (gateway === 'IPAYMU') {
                     payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
@@ -1294,8 +1298,8 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                     }
                 }
 
-                // Unified Status Handling: Ipaymu Status 1=Berhasil, 6=Paid
-                if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
+                // Unified Status Handling: Ipaymu Status 6=Paid
+                if (payCheck.success && (payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
                     console.log(`✅ [MANUAL CHECK] Payment found SUCCESS for ${trx.invoice} via ${(trx as any).paymentGateway}`);
 
                     const isDeposit = trx.type === 'DEPOSIT';
@@ -1433,9 +1437,15 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                         }
                     }
 
-                    return res.json({ success: true, message: "Status Updated", data: { status: newStatus } });
+                    const safeData = {
+                        ...trx,
+                        status: newStatus,
+                        guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+                    };
+
+                    return res.json({ success: true, message: "Status Updated", data: safeData });
                 } else {
-                    return res.json({ success: true, message: `Status Unchanged (${providerStatus})`, data: { status: trx.status } });
+                    return res.json({ success: true, message: `Status Unchanged (${providerStatus || 'PENDING'})`, data: trx });
                 }
             } else {
                 console.error(`❌ [CHECK-STATUS] VIP Check Failed: ${result.message}`);
@@ -1443,7 +1453,7 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
             }
         }
 
-        return res.json({ success: true, message: "No Updates Available (Not Processing)", data: { status: trx.status } });
+        return res.json({ success: true, message: "No Updates Available (Not Processing)", data: trx });
 
     } catch (error: any) {
         console.error("Check Status Error:", error);

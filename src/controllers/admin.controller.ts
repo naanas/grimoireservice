@@ -690,7 +690,11 @@ export const retryTransaction = async (req: Request, res: Response) => {
             }
 
             let payCheck: any = { success: false };
-            const gateway = (trx as any).paymentGateway || 'IPAYMU';
+            let gateway = (trx as any).paymentGateway;
+            if (!gateway) {
+                const cfg = await prisma.systemConfig.findUnique({ where: { key: 'PAYMENT_GATEWAY' } });
+                gateway = cfg?.value || 'TRIPAY';
+            }
 
             if (gateway === 'IPAYMU') {
                 const ipaymuService = await import('../services/ipaymu.service.js');
@@ -721,7 +725,7 @@ export const retryTransaction = async (req: Request, res: Response) => {
                 }
             }
 
-            if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
+            if (payCheck.success && (payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
                 console.log(`✅ [SAFE-RETRY] Payment confirmed! Updating status to PROCESSING.`);
                 await prisma.transaction.update({
                     where: { id: trxId },
