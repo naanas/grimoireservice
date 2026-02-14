@@ -450,32 +450,12 @@ export const getProducts = async (req: Request, res: Response) => {
     }
 };
 
-// GET /api/transaction/:id
-export const getTransaction = async (req: Request, res: Response) => {
-    const { id } = req.params;
-    try {
-        const trx = await prisma.transaction.findUnique({
-            where: { id },
-            include: {
-                product: true,
-                user: {
-                    select: { name: true, email: true }
-                }
-            }
-        });
-
-        if (!trx) return res.status(404).json({ success: false, message: 'Transaction not found' });
-
-        return res.json({ success: true, data: trx });
-    } catch (error) {
-        console.error("Get Trx Error:", error);
-        return res.status(500).json({ success: false, message: 'Internal Server Error' });
-    }
-};
 
 // GET /api/transaction/calculate-fee
 export const calculateFee = async (req: Request, res: Response) => {
-    const { code, amount } = req.query;
+    const code = req.query.code as string;
+    const amount = req.query.amount as string;
+
     if (!code || !amount) return res.status(400).json({ success: false, message: 'Missing parameters' });
 
     try {
