@@ -18,6 +18,7 @@ enum TransactionStatus {
   SUCCESS
   FAILED
   EXPIRED
+  PROVIDER_FAILED
 }
 
 model User {

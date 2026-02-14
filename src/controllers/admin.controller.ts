@@ -575,3 +575,50 @@ export const updateCategory = async (req: Request, res: Response) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+// POST /api/admin/transactions/:id/retry
+export const retryTransaction = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { processGameTopup } = await import('./transaction.controller.js');
+
+        const trxId = String(id);
+        const trx = await prisma.transaction.findUnique({
+            where: { id: trxId },
+            include: { product: true }
+        });
+
+        if (!trx) {
+            return res.status(404).json({ success: false, message: 'Transaction not found' });
+        }
+
+        // Logic Check: Only allow retry if paid but not successful
+        // We allow retry for FAILED, PROCESSING, or PROVIDER_FAILED
+        if (trx.status === 'SUCCESS') {
+            return res.status(400).json({ success: false, message: 'Transaction is already successful' });
+        }
+
+        if (trx.status === 'PENDING') {
+            return res.status(400).json({ success: false, message: 'Transaction is still pending payment' });
+        }
+
+        console.log(`🔄 [ADMIN] Retrying Transaction: ${trx.invoice} (${trxId})`);
+
+        // Reset providerStatus to allow lock to be acquired in processGameTopup
+        await prisma.transaction.update({
+            where: { id: trxId },
+            data: { providerStatus: null }
+        });
+
+        const result = await processGameTopup(trxId);
+
+        if (result.success) {
+            res.json({ success: true, message: 'Transaction retried successfully', data: result });
+        } else {
+            res.status(400).json({ success: false, message: result.message || 'Retry failed at provider' });
+        }
+
+    } catch (error: any) {
+        console.error("Retry Transaction Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};

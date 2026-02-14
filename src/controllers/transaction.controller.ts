@@ -180,19 +180,19 @@ export const processGameTopup = async (trxId: string) => {
 
             return { success: true };
         } else {
-            // 4B. Provider Rejected Immediately
+            // 4B. Provider Rejected Immediately (e.g. Insufficient Balance, System error)
             console.error(`❌ [PROCESS] Provider Failed: ${order.message}`);
             await prisma.transaction.update({
                 where: { id: trxId },
                 data: {
-                    status: 'FAILED',
-                    providerStatus: 'FAILED_AT_PROVIDER: ' + order.message,
+                    status: 'PROVIDER_FAILED' as any,
+                    providerStatus: 'PROVIDER_ERROR: ' + (order.message || 'Unknown'),
                     updatedAt: new Date()
                 }
             });
 
-            // TODO: Handle Auto Refund for Balance payments here if strictly needed
-            return { success: false, message: "Provider Failed" };
+            // TODO: Manual intervention required message via notification service
+            return { success: false, message: order.message };
         }
 
     } catch (error: any) {

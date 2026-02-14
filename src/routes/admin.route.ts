@@ -10,6 +10,7 @@ router.use(authenticateToken, verifyAdmin as any);
 router.get('/stats', adminController.getDashboardStats);
 
 router.get('/transactions', adminController.getAllTransactions);
+router.post('/transactions/:id/retry', adminController.retryTransaction);
 
 router.get('/products', adminController.getAllProducts);
 router.patch('/products/:id/price', adminController.updateProductPrice);
