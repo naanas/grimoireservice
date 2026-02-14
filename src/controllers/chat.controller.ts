@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { ChatService } from '../services/chat.service.js';
+import jwt from 'jsonwebtoken';
 
 export const startSession = async (req: Request, res: Response) => {
     try {
@@ -76,7 +77,7 @@ export const getSessionById = async (req: Request, res: Response) => {
                 // Let's assume the user IS authenticated via middleware?
                 // No, the route is public. 
                 // I'll decoding it here.
-                const jwt = (await import('jsonwebtoken')).default;
+                if (!process.env.JWT_SECRET) throw new Error("No Secret");
                 const decoded: any = jwt.verify(token, process.env.JWT_SECRET);
 
                 if (decoded.id !== session.userId && decoded.role !== 'ADMIN') {
@@ -106,6 +107,20 @@ export const endSession = async (req: Request, res: Response) => {
     try {
         const { sessionId } = req.body;
         if (!sessionId) return res.status(400).json({ success: false, message: 'Session ID required' });
+
+        const session = await ChatService.getSession(sessionId);
+        if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
+
+        // Security Check: Only Owner or Admin can close
+        const authUser = (req as any).user;
+        const isAdmin = authUser?.role === 'ADMIN';
+        const isOwner = authUser && authUser.id === session.userId;
+
+        // If it was a guest session, we'd need email/name check (less strict but okay for guest)
+        // For now, if it's a USER session, we enforce ownership.
+        if (session.userId && !isOwner && !isAdmin) {
+            return res.status(403).json({ success: false, message: 'Access Denied' });
+        }
 
         await ChatService.closeSession(sessionId);
         res.json({ success: true, message: 'Session ended' });

@@ -72,7 +72,7 @@ app.use((req, res, next) => {
 
         // Deep Mask sensitive fields function
         const maskSensitive = (obj: any) => {
-            const sensitiveFields = ['password', 'token', 'secret', 'pin', 'cvv', 'creditCard'];
+            const sensitiveFields = ['password', 'token', 'secret', 'pin', 'cvv', 'creditcard', 'apikey', 'privatekey', 'signature', 'merchantcode'];
             for (const key in obj) {
                 if (typeof obj[key] === 'object' && obj[key] !== null) {
                     maskSensitive(obj[key]);

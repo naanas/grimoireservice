@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma.js';
 import * as gameProvider from '../services/game.service.js'; // Consolidated on Game Service (Adapter)
 import * as ipaymuService from '../services/ipaymu.service.js';
@@ -538,8 +539,7 @@ export const createTransaction = async (req: Request, res: Response) => {
             const token = authHeader.split(" ")[1];
             if (!token) return res.status(401).json({ success: false, message: 'Invalid token' });
 
-            // Verify Token
-            const jwt = (await import('jsonwebtoken')).default;
+            // Verify Token (REMOVED: Using middleware is better, but let's keep for legacy/internal check)
             let payerId;
             try {
                 if (!process.env.JWT_SECRET) throw new Error("Missing Secret");
