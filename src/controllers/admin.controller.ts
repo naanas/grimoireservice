@@ -580,6 +580,7 @@ export const retryTransaction = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const { processGameTopup } = await import('./transaction.controller.js');
+        const gameProvider = await import('../services/game.service.js');
 
         const trxId = String(id);
         const trx = await prisma.transaction.findUnique({
@@ -587,12 +588,11 @@ export const retryTransaction = async (req: Request, res: Response) => {
             include: { product: true }
         });
 
-        if (!trx) {
-            return res.status(404).json({ success: false, message: 'Transaction not found' });
+        if (!trx || !trx.product) {
+            return res.status(404).json({ success: false, message: 'Transaction or Product not found' });
         }
 
-        // Logic Check: Only allow retry if paid but not successful
-        // We allow retry for FAILED, PROCESSING, or PROVIDER_FAILED
+        // 1. Basic Validation
         if (trx.status === 'SUCCESS') {
             return res.status(400).json({ success: false, message: 'Transaction is already successful' });
         }
@@ -601,7 +601,50 @@ export const retryTransaction = async (req: Request, res: Response) => {
             return res.status(400).json({ success: false, message: 'Transaction is still pending payment' });
         }
 
-        console.log(`🔄 [ADMIN] Retrying Transaction: ${trx.invoice} (${trxId})`);
+        console.log(`🔄 [SAFE-RETRY] Analyzing Transaction: ${trx.invoice} (${trxId})`);
+
+        // 2. [INQUIRY BEFORE ORDER] 🛡️
+        // Check if the provider already has a successful record for this invoice
+        let checkResult = null;
+        if (gameProvider.PROVIDER === 'APIGAMES') {
+            // Apigames allows inquiry by our Invoice (ref_id)
+            checkResult = await gameProvider.checkTransaction(trx.invoice);
+        } else if (gameProvider.PROVIDER === 'VIP' && trx.providerTrxId) {
+            // VIP requires their ID
+            checkResult = await gameProvider.checkTransaction(trx.invoice, trx.providerTrxId);
+        }
+
+        if (checkResult && checkResult.success && checkResult.data) {
+            const pStatus = checkResult.data.status?.toLowerCase();
+            console.log(`🔍 [SAFE-RETRY] Provider reported status: ${pStatus}`);
+
+            // If it's already success or on-process at provider, DON'T re-order.
+            if (pStatus === 'success' || pStatus === 'processing' || pStatus === 'waiting' || pStatus === '1') {
+                console.log(`✅ [SAFE-RETRY] Found existing record at provider. Updating DB instead of re-ordering.`);
+
+                const newStatus = pStatus === 'success' || pStatus === '1' ? 'SUCCESS' : 'PROCESSING';
+
+                await prisma.transaction.update({
+                    where: { id: trxId },
+                    data: {
+                        status: newStatus as any,
+                        sn: (checkResult.data as any).sn || trx.sn,
+                        providerTrxId: (checkResult.data as any).trxId || trx.providerTrxId,
+                        providerStatus: (checkResult.data as any).status,
+                        updatedAt: new Date()
+                    }
+                });
+
+                return res.json({
+                    success: true,
+                    message: `Existing transaction found at provider (${newStatus}). DB Updated.`,
+                    data: checkResult.data
+                });
+            }
+        }
+
+        // 3. If no existing successful record found -> Proceed to Re-Order
+        console.log(`🚀 [SAFE-RETRY] No active record found at provider. Placing new order...`);
 
         // Reset providerStatus to allow lock to be acquired in processGameTopup
         await prisma.transaction.update({
@@ -612,13 +655,13 @@ export const retryTransaction = async (req: Request, res: Response) => {
         const result = await processGameTopup(trxId);
 
         if (result.success) {
-            res.json({ success: true, message: 'Transaction retried successfully', data: result });
+            res.json({ success: true, message: 'New order placed successfully', data: result });
         } else {
             res.status(400).json({ success: false, message: result.message || 'Retry failed at provider' });
         }
 
     } catch (error: any) {
-        console.error("Retry Transaction Error:", error);
+        console.error("Safe Retry Error:", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };

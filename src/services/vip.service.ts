@@ -148,6 +148,7 @@ export const checkTransaction = async (trxId: string) => {
             return {
                 success: true,
                 data: {
+                    trxId: trxId,
                     status: tx.status, // success, error, waiting
                     sn: tx.note || '', // sometimes SN is in note? Docs say 'note', example doesn't show SN field strictly.
                     // Actually logic needed: if status success, maybe note has SN?
