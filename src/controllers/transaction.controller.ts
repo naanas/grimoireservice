@@ -10,41 +10,70 @@ import axios from 'axios';
 // --- HELPER FUNCTIONS ---
 
 export const handleTripayCallback = async (req: Request, res: Response) => {
-    // Tripay Callback Handler
     const callbackSignature = req.headers['x-callback-signature'];
-    const event = req.headers['x-callback-event']; // e.g. 'payment_status'
+    const event = req.headers['x-callback-event'];
 
-    console.log(`🔔 [TRIPAY-CALLBACK] Event: ${event} | Ref: ${req.body.merchant_ref}`);
+    const { merchant_ref, status, reference } = req.body;
+    console.log(`🔔 [TRIPAY-CALLBACK] Event: ${event} | Ref: ${merchant_ref} | TripayRef: ${reference}`);
 
     if (event !== 'payment_status') {
-        return res.json({ success: true }); // Ignore other events
+        return res.json({ success: true });
     }
 
     try {
-        // Validate Signature
-        const privateKey = process.env.TRIPAY_PRIVATE_KEY;
+        // 1. Fetch Transaction to determine mode if needed (or just fetch all configs)
+        const trx = await prisma.transaction.findUnique({
+            where: { id: merchant_ref }
+        });
+
+        if (!trx) {
+            console.error(`❌ [TRIPAY-CALLBACK] Transaction ${merchant_ref} not found`);
+            return res.status(404).json({ success: false, message: 'Transaction not found' });
+        }
+
+        // 2. Fetch Tripay Configs from DB
+        const configs = await prisma.systemConfig.findMany({
+            where: {
+                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_PROD_PRIVATE_KEY'] }
+            }
+        });
+        const configMap: any = {};
+        configs.forEach(c => configMap[c.key] = c.value);
+
+        const mode = configMap['TRIPAY_MODE'] || process.env.TRIPAY_MODE || 'SANDBOX';
+        const privateKey = mode === 'PRODUCTION'
+            ? (configMap['TRIPAY_PROD_PRIVATE_KEY'] || process.env.TRIPAY_PROD_PRIVATE_KEY)
+            : (configMap['TRIPAY_SB_PRIVATE_KEY'] || process.env.TRIPAY_SB_PRIVATE_KEY);
+
         if (!privateKey) {
-            console.error("❌ [TRIPAY-CALLBACK] TRIPAY_PRIVATE_KEY is missing in ENV");
+            console.error("❌ [TRIPAY-CALLBACK] Tripay Private Key is missing");
             return res.status(500).json({ success: false, message: 'Configuration Error' });
         }
 
+        // 3. Validate Signature
+        // Tripay manual: hash = hmac_sha256(json_body, private_key)
         const signature = crypto.createHmac('sha256', privateKey).update(JSON.stringify(req.body)).digest('hex');
+
         if (signature !== callbackSignature) {
             console.error(`❌ [TRIPAY-CALLBACK] Invalid Signature. Got: ${callbackSignature} | Expected: ${signature}`);
             return res.status(400).json({ success: false, message: 'Invalid Signature' });
         }
 
-        const { merchant_ref, status } = req.body;
-
-        // Map Status
-        // Tripay: UNPAID, PAIDO, FAILED, EXPIRED, REFUND
-        let newStatus = 'PENDING';
+        // 4. Map Status
+        let newStatus = trx.status;
         if (status === 'PAID') newStatus = 'SUCCESS';
         else if (status === 'FAILED' || status === 'EXPIRED' || status === 'REFUND') newStatus = 'FAILED';
 
-        if (newStatus === 'SUCCESS') {
+        if (newStatus === 'SUCCESS' && trx.status !== 'SUCCESS') {
+            // Update reference if missing
+            if (!trx.paymentTrxId) {
+                await prisma.transaction.update({
+                    where: { id: merchant_ref },
+                    data: { paymentTrxId: reference }
+                });
+            }
             await processGameTopup(merchant_ref);
-        } else if (newStatus === 'FAILED') {
+        } else if (newStatus === 'FAILED' && trx.status !== 'FAILED') {
             await prisma.transaction.update({
                 where: { id: merchant_ref },
                 data: { status: 'FAILED', providerStatus: `TRIPAY_${status}` }
@@ -52,9 +81,9 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
         }
 
         res.json({ success: true });
-    } catch (error) {
-        console.error("Tripay Callback Error:", error);
-        res.status(500).json({ success: false });
+    } catch (error: any) {
+        console.error("❌ [TRIPAY-CALLBACK] Error:", error);
+        res.status(500).json({ success: false, message: error.message });
     }
 };
 
