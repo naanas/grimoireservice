@@ -61,19 +61,47 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
 
         // 4. Map Status
         let newStatus = trx.status;
-        if (status === 'PAID') newStatus = 'SUCCESS';
-        else if (status === 'FAILED' || status === 'EXPIRED' || status === 'REFUND') newStatus = 'FAILED';
+        if (status === 'PAID') {
+            if (trx.type === 'DEPOSIT') {
+                newStatus = 'SUCCESS';
+            } else {
+                newStatus = 'PROCESSING'; // Standard for Game Topup (awaiting provider)
+            }
+        } else if (status === 'FAILED' || status === 'EXPIRED' || status === 'REFUND') {
+            newStatus = 'FAILED';
+        }
 
-        if (newStatus === 'SUCCESS' && trx.status !== 'SUCCESS') {
-            // Update reference if missing
-            if (!trx.paymentTrxId) {
-                await prisma.transaction.update({
-                    where: { id: merchant_ref },
-                    data: { paymentTrxId: reference }
+        if (newStatus !== trx.status && (newStatus === 'SUCCESS' || newStatus === 'PROCESSING')) {
+            // Update reference if missing & status
+            await prisma.transaction.update({
+                where: { id: merchant_ref },
+                data: {
+                    paymentTrxId: reference,
+                    status: newStatus as any,
+                    updatedAt: new Date()
+                }
+            });
+
+            // ⚡ Real-Time Socket Update
+            const io = req.app.get('io');
+            if (io) {
+                io.to(merchant_ref).emit('transaction_update', {
+                    status: newStatus,
+                    transactionId: merchant_ref
                 });
             }
-            // Trigger background process (non-blocking)
-            processGameTopup(merchant_ref).catch(e => console.error("❌ [TRIPAY-CALLBACK] Background Topup Error:", e));
+
+            if (trx.type === 'DEPOSIT' && trx.userId) {
+                // Add Balance for Deposit
+                console.log(`💰 [WALLET] Adding Rp${trx.amount} to User ${trx.userId} via Tripay Callback`);
+                await prisma.user.update({
+                    where: { id: trx.userId },
+                    data: { balance: { increment: trx.amount } }
+                });
+            } else if (trx.type === 'TOPUP' || !trx.type) {
+                // Trigger Provider for Game Topup
+                processGameTopup(merchant_ref).catch(e => console.error("❌ [TRIPAY-CALLBACK] Background Topup Error:", e));
+            }
         } else if (newStatus === 'FAILED' && trx.status !== 'FAILED') {
             await prisma.transaction.update({
                 where: { id: merchant_ref },
@@ -1194,19 +1222,40 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                 if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
                     console.log(`✅ [MANUAL CHECK] Payment found SUCCESS for ${trx.invoice} via ${(trx as any).paymentGateway}`);
 
-                    // Update to PROCESSING (Paid, waiting for provider)
+                    const isDeposit = trx.type === 'DEPOSIT';
+                    const newStatus = isDeposit ? 'SUCCESS' : 'PROCESSING';
+
+                    // Update Transaction
                     await prisma.transaction.update({
                         where: { id: trx.id },
                         data: {
-                            status: 'PROCESSING',
+                            status: newStatus as any,
                             updatedAt: new Date()
                         }
                     });
 
-                    // Trigger Provider
-                    processGameTopup(trx.id).catch(console.error);
+                    // ⚡ Real-Time Socket Update
+                    const io = req.app.get('io');
+                    if (io) {
+                        io.to(id).emit('transaction_update', {
+                            status: newStatus,
+                            transactionId: id
+                        });
+                    }
 
-                    return res.json({ success: true, message: "Payment Verified! Order Processing.", data: { status: 'PROCESSING' } });
+                    if (isDeposit && trx.userId) {
+                        // Add Balance
+                        console.log(`💰 [WALLET] Adding Rp${trx.amount} to User ${trx.userId} via Manual Sync`);
+                        await prisma.user.update({
+                            where: { id: trx.userId },
+                            data: { balance: { increment: trx.amount } }
+                        });
+                        return res.json({ success: true, message: "Payment Verified! Soul Transfused.", data: { status: 'SUCCESS' } });
+                    } else {
+                        // Trigger Provider for Game Topup
+                        processGameTopup(trx.id).catch(console.error);
+                        return res.json({ success: true, message: "Payment Verified! Order Processing.", data: { status: 'PROCESSING' } });
+                    }
                 }
             }
         }

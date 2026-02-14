@@ -575,12 +575,16 @@ export const updateCategory = async (req: Request, res: Response) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+import axios from 'axios';
+import * as ipaymuService from '../services/ipaymu.service.js';
+
 // POST /api/admin/transactions/:id/retry
 export const retryTransaction = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const { processGameTopup } = await import('./transaction.controller.js');
         const gameProvider = await import('../services/game.service.js');
+        const whatsappService = await import('../services/whatsapp.service.js');
 
         const trxId = String(id);
         const trx = await prisma.transaction.findUnique({
@@ -588,20 +592,94 @@ export const retryTransaction = async (req: Request, res: Response) => {
             include: { product: true }
         });
 
-        if (!trx || !trx.product) {
-            return res.status(404).json({ success: false, message: 'Transaction or Product not found' });
+        if (!trx) {
+            return res.status(404).json({ success: false, message: 'Transaction not found' });
         }
+
+        const isDeposit = trx.type === 'DEPOSIT';
 
         // 1. Basic Validation
         if (trx.status === 'SUCCESS') {
             return res.status(400).json({ success: false, message: 'Transaction is already successful' });
         }
 
-        if (trx.status === 'PENDING') {
-            return res.status(400).json({ success: false, message: 'Transaction is still pending payment' });
+        // For TOPUP (Game), product is required. For DEPOSIT, it isn't.
+        if (!isDeposit && !trx.product) {
+            return res.status(404).json({ success: false, message: 'Product missing for topup transaction' });
         }
 
-        console.log(`🔄 [SAFE-RETRY] Analyzing Transaction: ${trx.invoice} (${trxId})`);
+        if (isDeposit) {
+            console.log(`🚀 [DEPOSIT-RETRY] Syncing with gateway for invoice ${trx.invoice}...`);
+
+            if (!trx.paymentTrxId) {
+                return res.status(400).json({ success: false, message: 'Payment Reference (paymentTrxId) missing. Cannot sync with gateway.' });
+            }
+
+            let payCheck: any = { success: false };
+            const gateway = (trx as any).paymentGateway || 'IPAYMU';
+
+            if (gateway === 'IPAYMU') {
+                payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
+            } else if (gateway === 'TRIPAY') {
+                const configs = await (prisma as any).systemConfig.findMany({
+                    where: { key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] } }
+                });
+                const configMap: Record<string, string> = {};
+                configs.forEach((c: any) => configMap[c.key] = c.value);
+
+                const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                const apiKey = mode === 'SANDBOX' ? configMap['TRIPAY_SB_API_KEY'] : configMap['TRIPAY_PROD_API_KEY'];
+                const baseUrl = mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
+
+                try {
+                    const response = await axios.get(`${baseUrl}/transaction/detail`, {
+                        params: { reference: trx.paymentTrxId },
+                        headers: { 'Authorization': `Bearer ${apiKey}` }
+                    });
+                    const data = response.data?.data;
+                    if (data && (data.status === 'PAID' || data.status === 'SETTLEMENT')) {
+                        payCheck = { success: true, status: 6, statusDesc: 'Berhasil' };
+                    }
+                } catch (err: any) {
+                    console.error(`❌ [TRIPAY] Check Error:`, err.response?.data || err.message);
+                }
+            }
+
+            if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
+                // Payment confirmed!
+                await prisma.$transaction(async (tx) => {
+                    await tx.transaction.update({
+                        where: { id: trxId },
+                        data: { status: 'SUCCESS', updatedAt: new Date() }
+                    });
+
+                    if (trx.userId) {
+                        await tx.user.update({
+                            where: { id: trx.userId },
+                            data: { balance: { increment: trx.amount } }
+                        });
+                    }
+                });
+
+                // Send WA notification
+                let targetWa = trx.guestContact;
+                if (!targetWa && trx.userId) {
+                    const u = await prisma.user.findUnique({ where: { id: trx.userId } });
+                    if (u) targetWa = u.phoneNumber;
+                }
+                if (targetWa) {
+                    const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n💰 *PEMBAYARAN TERVERIFIKASI*\nInvoice: *${trx.invoice}*\nStatus: BERHASIL (Manual Retry)\nTotal: Rp${trx.amount.toLocaleString('id-ID')}\n\nSaldo Anda telah ditambahkan. Terima kasih!`;
+                    whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
+                }
+
+                return res.json({ success: true, message: 'Payment verified and balance added successfully.' });
+            } else {
+                return res.status(400).json({ success: false, message: 'Gateway reports payment is still pending or failed.' });
+            }
+        }
+
+        // --- CONTINUE WITH TOPUP (GAME) RETRY LOGIC ---
+        console.log(`🔄 [SAFE-RETRY] Analyzing Topup Transaction: ${trx.invoice} (${trxId})`);
 
         // 2. [INQUIRY BEFORE ORDER] 🛡️
         // Check if the provider already has a successful record for this invoice
