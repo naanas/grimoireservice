@@ -902,7 +902,7 @@ export const createTransaction = async (req: Request, res: Response) => {
 
             const payment = await paymentService.createPayment(
                 trxId,
-                totalPayable,
+                finalAmount, // Send NET amount (User requested to reduce amount by fee)
                 gateway as 'TRIPAY' | 'IPAYMU',
                 finalChannel,
                 activeUser?.name || 'Guest',
@@ -1065,18 +1065,20 @@ export const createDeposit = async (req: Request, res: Response) => {
 
         const payment = await paymentService.createPayment(
             trxId,
-            Number(amount),
+            Number(amount), // Send NET amount (User requested to reduce amount by fee)
             gateway as 'TRIPAY' | 'IPAYMU',
             finalChannel,
             user.name || 'User',
-            user.email,
+            user.email || 'user@grimoire.com',
             user.phoneNumber || '08123456789',
-            'Deposit Saldo Grimoire',
+            `Deposit Rp ${amount}`,
             // Pass Credentials (Important for dynamic config)
             tripayConfig.apiKey,
             tripayConfig.privateKey,
             tripayConfig.merchantCode,
-            tripayConfig.mode
+            tripayConfig.mode,
+            Number(amount), // basePrice
+            0 // adminFee for deposits
         );
 
         if (!payment.success) {
