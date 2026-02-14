@@ -102,6 +102,7 @@ model Transaction {
   paymentMethod   String            // QRIS, VA_BCA, etc.
   paymentUrl      String?           // URL/QR String from Ipaymu
   paymentTrxId    String?           // ID from Ipaymu
+  paymentGateway  String?           // TRIPAY, IPAYMU, or BALANCE
   paymentChannel  String?           // e.g. "bca", "qris" (Saved from Callback)
   paymentNo       String?           // e.g. VA Number (Saved from Callback)
   

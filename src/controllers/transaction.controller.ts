@@ -5,6 +5,7 @@ import * as gameProvider from '../services/game.service.js'; // Consolidated on 
 import * as ipaymuService from '../services/ipaymu.service.js';
 import * as whatsappService from '../services/whatsapp.service.js';
 import * as crypto from 'crypto'; // Added for VIP callback signature validation
+import axios from 'axios';
 
 // --- HELPER FUNCTIONS ---
 
@@ -579,9 +580,10 @@ export const createTransaction = async (req: Request, res: Response) => {
                             voucherCode: validVoucherCode,
                             status: 'PROCESSING',
                             paymentMethod: 'BALANCE',
+                            paymentGateway: 'BALANCE',
                             userId: payer.id,
                             guestContact: payer.phoneNumber || null
-                        }
+                        } as any
                     });
 
                     // Respond SUCCESS immediately
@@ -644,58 +646,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                 } catch (e) { }
             }
 
-            // Create Pending Transaction in DB First
-            let trxId = `TRX-${Date.now()}`;
-            try {
-                const trx = await prisma.transaction.create({
-                    data: {
-                        invoice,
-                        productId,
-                        targetId: userId, // Game User ID
-                        zoneId,
-                        amount: totalPayable, // Store TOTAL including fee
-                        discountAmount,
-                        adminFee: adminFee, // Store Fee separately for records
-                        voucherCode: validVoucherCode,
-                        status: 'PENDING',
-                        paymentMethod,
-                        userId: userIdForTrx || undefined,
-                        guestContact: targetPhone || null
-                    }
-                });
-                trxId = trx.id;
-            } catch (dbError) {
-                console.warn("DB Transaction Create Failed:", dbError);
-                return res.status(500).json({ success: false, message: "Database Error" });
-            }
-
-            // Call Java Payment Service
-            // Determine Method Logic:
-            // Input `paymentMethod`: "TRIPAY", "IPAYMU", "QRIS", "VA_BCA"? 
-            // The frontend usually sends specific method info.
-            // Setup: 
-            // - Logic: If paymentMethod is generic (e.g. 'VA', 'QRIS') we need to know WHICH PROVDER to use.
-            // - Start with: All 'QRIS' -> Tripay? Or Ipaymu? 
-            // - User decided: Tripay + Migrate Ipaymu.
-            // - Let's assume frontend sends Provider explicitly OR we map it.
-            // - Current Frontend sends "QRIS", "VA_BCA", etc. (derived from channel).
-            // - Let's Default to Tripay for new stuff, Use Ipaymu for legacy? 
-            // - User wants "Ipaymu pindah juga". So Java handles both.
-            // - We need to tell Java WHICH ONE. 
-            // - Let's Map: "TRIPAY" or "IPAYMU" as `method` arg to Java.
-            // - How do we know? Maybe add config/env? Or frontend sends it?
-            // - For now: Let's assume we pass "TRIPAY" as default, or check a flag.
-
-            // FIXME: Hardcoded selection or derived?
-            // "satu project sama tripay". 
-            // Let's use IPAYMU for existing Ipaymu Channels if we can distinguish.
-            // OR change all to Tripay? 
-            // User: "yang ipaymu pindah juga bisa gga?". Meaning KEEP Ipaymu but in Java.
-            // So we need to Select based on Channel.
-
-            const paymentService = await import('../services/payment.service.js');
-
-            // Determine Gateway from DB (SystemConfig) or ENV (Fallback)
+            // --- GATEWAY SELECTION ---
             let gateway = 'IPAYMU'; // Default
             let tripayConfig = {
                 mode: 'PRODUCTION', // Default
@@ -742,6 +693,58 @@ export const createTransaction = async (req: Request, res: Response) => {
                 // If DB fails, fallback to ENV
                 gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
             }
+
+            // Create Pending Transaction in DB First
+            let trxId = `TRX-${Date.now()}`;
+            try {
+                const trx = await prisma.transaction.create({
+                    data: {
+                        invoice,
+                        productId,
+                        targetId: userId, // Game User ID
+                        zoneId,
+                        amount: totalPayable, // Store TOTAL including fee
+                        discountAmount,
+                        adminFee: adminFee, // Store Fee separately for records
+                        voucherCode: validVoucherCode,
+                        status: 'PENDING',
+                        paymentMethod,
+                        paymentGateway: gateway,
+                        userId: userIdForTrx || undefined,
+                        guestContact: targetPhone || null
+                    } as any
+                });
+                trxId = trx.id;
+            } catch (dbError) {
+                console.warn("DB Transaction Create Failed:", dbError);
+                return res.status(500).json({ success: false, message: "Database Error" });
+            }
+
+            // Call Java Payment Service
+            // Determine Method Logic:
+            // Input `paymentMethod`: "TRIPAY", "IPAYMU", "QRIS", "VA_BCA"? 
+            // The frontend usually sends specific method info.
+            // Setup: 
+            // - Logic: If paymentMethod is generic (e.g. 'VA', 'QRIS') we need to know WHICH PROVDER to use.
+            // - Start with: All 'QRIS' -> Tripay? Or Ipaymu? 
+            // - User decided: Tripay + Migrate Ipaymu.
+            // - Let's assume frontend sends Provider explicitly OR we map it.
+            // - Current Frontend sends "QRIS", "VA_BCA", etc. (derived from channel).
+            // - Let's Default to Tripay for new stuff, Use Ipaymu for legacy? 
+            // - User wants "Ipaymu pindah juga". So Java handles both.
+            // - We need to tell Java WHICH ONE. 
+            // - Let's Map: "TRIPAY" or "IPAYMU" as `method` arg to Java.
+            // - How do we know? Maybe add config/env? Or frontend sends it?
+            // - For now: Let's assume we pass "TRIPAY" as default, or check a flag.
+
+            // FIXME: Hardcoded selection or derived?
+            // "satu project sama tripay". 
+            // Let's use IPAYMU for existing Ipaymu Channels if we can distinguish.
+            // OR change all to Tripay? 
+            // User: "yang ipaymu pindah juga bisa gga?". Meaning KEEP Ipaymu but in Java.
+            // So we need to Select based on Channel.
+
+            const paymentService = await import('../services/payment.service.js');
 
             let finalChannel = paymentChannel || paymentMethod;
 
@@ -1062,17 +1065,54 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
         const trx = await prisma.transaction.findUnique({ where: { id }, include: { product: true } });
         if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
 
-        // A. If PENDING, Check Payment Gateway (IPAYMU) First
+        // A. If PENDING, Check Payment Gateway First
         if ((trx.status as any) === 'PENDING') {
             if (trx.paymentTrxId) {
-                const payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
+                let payCheck: any = { success: false };
 
-                // Ipaymu Status: 1=Berhasil, 6=Paid
+                // Determine Gateway
+                const gateway = (trx as any).paymentGateway || 'IPAYMU'; // Fallback for older records
+
+                if (gateway === 'IPAYMU') {
+                    payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
+                } else if (gateway === 'TRIPAY') {
+                    // IMPLEMENT TRIPAY CHECK IN NODE.JS OR CALL JAVA
+                    // For now, let's keep it in Node.js for speed
+                    console.log(`🔍 [TRIPAY] Checking Status for: ${trx.paymentTrxId}`);
+                    // Fetch Tripay Config
+                    const configs = await (prisma as any).systemConfig.findMany({
+                        where: {
+                            key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] }
+                        }
+                    });
+                    const configMap: Record<string, string> = {};
+                    configs.forEach((c: any) => configMap[c.key] = c.value);
+
+                    const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                    const apiKey = mode === 'SANDBOX' ? configMap['TRIPAY_SB_API_KEY'] : configMap['TRIPAY_PROD_API_KEY'];
+                    const baseUrl = mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
+
+                    try {
+                        const response = await axios.get(`${baseUrl}/transaction/detail`, {
+                            params: { reference: trx.paymentTrxId },
+                            headers: { 'Authorization': `Bearer ${apiKey}` }
+                        });
+                        const data = response.data?.data;
+                        if (data && (data.status === 'PAID' || data.status === 'SETTLEMENT')) {
+                            payCheck = { success: true, status: 6, statusDesc: 'Berhasil' };
+                        } else {
+                            console.log(`ℹ️ [TRIPAY] Status is still: ${data?.status}`);
+                        }
+                    } catch (err: any) {
+                        console.error(`❌ [TRIPAY] Check Error:`, err.response?.data || err.message);
+                    }
+                }
+
+                // Unified Status Handling: Ipaymu Status 1=Berhasil, 6=Paid
                 if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
-                    console.log(`✅ [MANUAL CHECK] Payment found SUCCESS for ${trx.invoice}`);
+                    console.log(`✅ [MANUAL CHECK] Payment found SUCCESS for ${trx.invoice} via ${(trx as any).paymentGateway}`);
 
                     // Update to PROCESSING (Paid, waiting for provider)
-                    // We treat this as 'PROCESSING' because we are about to trigger provider
                     await prisma.transaction.update({
                         where: { id: trx.id },
                         data: {
@@ -1080,9 +1120,6 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                             updatedAt: new Date()
                         }
                     });
-
-                    // Trigger WA Receipt (if not sent yet? Assume manual check allows re-trigger or ensure it wasn't sent)
-                    // ... (Skipping WA here to avoid spam, or simplistic log)
 
                     // Trigger Provider
                     processGameTopup(trx.id).catch(console.error);
