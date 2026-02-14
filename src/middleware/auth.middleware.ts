@@ -36,3 +36,23 @@ export const verifyAdmin = (req: AuthRequest, res: Response, next: NextFunction)
     next();
 };
 
+export const optionalAuthenticate = (req: AuthRequest, res: Response, next: NextFunction) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return next(); // Proceed as guest
+    }
+
+    try {
+        if (!process.env.JWT_SECRET) return next();
+        const verified = jwt.verify(token, process.env.JWT_SECRET);
+        req.user = verified;
+        next();
+    } catch (error) {
+        // If token is invalid, we still treat as guest or could fail? 
+        // Safer to just proceed as guest or let them know token is bad.
+        next();
+    }
+};
+

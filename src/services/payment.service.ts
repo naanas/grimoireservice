@@ -37,7 +37,9 @@ export const createPayment = async (
             tripayMode
         };
 
-        const response = await axios.post(`${PAYMENT_SERVICE_URL}/api/payment/create`, payload);
+        const response = await axios.post(`${PAYMENT_SERVICE_URL}/api/payment/create`, payload, {
+            headers: { 'X-Internal-Token': process.env.INTERNAL_SERVICE_TOKEN || 'dev-token' }
+        });
 
         return response.data;
     } catch (error: any) {

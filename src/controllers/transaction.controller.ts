@@ -19,10 +19,18 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
     }
 
     try {
-        // Validate Signature (Optional but recommended)
-        // const privateKey = process.env.TRIPAY_PRIVATE_KEY;
-        // const signature = crypto.createHmac('sha256', privateKey).update(JSON.stringify(req.body)).digest('hex');
-        // if (signature !== callbackSignature) return res.status(400).json({ success: false, message: 'Invalid Signature' });
+        // Validate Signature
+        const privateKey = process.env.TRIPAY_PRIVATE_KEY;
+        if (!privateKey) {
+            console.error("❌ [TRIPAY-CALLBACK] TRIPAY_PRIVATE_KEY is missing in ENV");
+            return res.status(500).json({ success: false, message: 'Configuration Error' });
+        }
+
+        const signature = crypto.createHmac('sha256', privateKey).update(JSON.stringify(req.body)).digest('hex');
+        if (signature !== callbackSignature) {
+            console.error(`❌ [TRIPAY-CALLBACK] Invalid Signature. Got: ${callbackSignature} | Expected: ${signature}`);
+            return res.status(400).json({ success: false, message: 'Invalid Signature' });
+        }
 
         const { merchant_ref, status } = req.body;
 
@@ -1212,7 +1220,23 @@ export const getTransaction = async (req: Request, res: Response) => {
 
         if (!transaction) return res.status(404).json({ success: false, message: 'Transaction not found' });
 
-        res.json({ success: true, data: transaction });
+        // IDOR Protection: 
+        // If transaction has a userId, ensure only the owner can see full details.
+        // For guest transactions, we might allow public view but hide sensitive contact info.
+        const authUser = (req as any).user;
+        const isOwner = authUser && authUser.id === transaction.userId;
+
+        if (transaction.userId && !isOwner) {
+            return res.status(403).json({ success: false, message: 'Access Denied: Private Transaction' });
+        }
+
+        // Sensitive Data Masking for non-owners (e.g. public status check)
+        const safeData = {
+            ...transaction,
+            guestContact: isOwner ? transaction.guestContact : '********' + (transaction.guestContact?.slice(-3) || '')
+        };
+
+        res.json({ success: true, data: safeData });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -1224,9 +1248,12 @@ const VIP_WHITELIST_IP = '178.248.73.218';
 export const handleVipCallback = async (req: Request, res: Response) => {
     // 1. IP Whitelist Check
     const remoteIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '';
-    if (process.env.NODE_ENV === 'production' && !remoteIp.includes(VIP_WHITELIST_IP)) {
-        console.warn(`[VIP CALLBACK] Unauthorized IP: ${remoteIp}`);
-        // return res.status(403).json({ result: false, message: 'Unauthorized IP' }); 
+    if (process.env.NODE_ENV === 'production') {
+        const isWhitelisted = remoteIp === VIP_WHITELIST_IP || remoteIp.includes(VIP_WHITELIST_IP);
+        if (!isWhitelisted) {
+            console.warn(`[VIP CALLBACK] Unauthorized IP: ${remoteIp}`);
+            return res.status(403).json({ result: false, message: 'Unauthorized IP' });
+        }
     }
 
     // 2. Signature Check
