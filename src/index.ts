@@ -43,17 +43,6 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-import { rateLimit } from 'express-rate-limit';
-
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    limit: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes).
-    standardHeaders: 'draft-7', // Set `RateLimit` and `RateLimit-Policy` headers
-    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-    message: { success: false, message: "Too many requests, please try again later." }
-});
-
-app.use('/api/', limiter);
 
 app.use(express.json());
 // Ipaymu Callback uses x-www-form-urlencoded
