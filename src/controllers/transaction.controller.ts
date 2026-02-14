@@ -563,37 +563,102 @@ export const createTransaction = async (req: Request, res: Response) => {
 
         const finalAmount = amount - discountAmount;
 
-        // --- GATEWAY FEE CALCULATION ---
-        // Calculate fee based on payment method to ensure backend amount matches frontend display
-        // Rates should match PaymentChannels.ts
+        // --- GATEWAY CONFIG & SELECTION (Moved Up for Fee Sync) ---
+        let gateway = 'IPAYMU';
+        let tripayConfig = {
+            mode: 'PRODUCTION',
+            apiKey: '',
+            privateKey: '',
+            merchantCode: ''
+        };
+
+        try {
+            const configs = await (prisma as any).systemConfig.findMany({
+                where: {
+                    key: { in: ['PAYMENT_GATEWAY', 'TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_SB_MERCHANT_CODE', 'TRIPAY_PROD_API_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_PROD_MERCHANT_CODE'] }
+                }
+            });
+            const configMap: Record<string, string> = {};
+            configs.forEach((c: any) => configMap[c.key] = c.value);
+
+            if (configMap['PAYMENT_GATEWAY']) gateway = configMap['PAYMENT_GATEWAY'].toUpperCase();
+            else gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
+
+            if (gateway === 'TRIPAY') {
+                const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                tripayConfig.mode = mode;
+                if (mode === 'SANDBOX') {
+                    tripayConfig.apiKey = configMap['TRIPAY_SB_API_KEY'] || '';
+                    tripayConfig.privateKey = configMap['TRIPAY_SB_PRIVATE_KEY'] || '';
+                    tripayConfig.merchantCode = configMap['TRIPAY_SB_MERCHANT_CODE'] || '';
+                } else {
+                    tripayConfig.apiKey = configMap['TRIPAY_PROD_API_KEY'] || '';
+                    tripayConfig.privateKey = configMap['TRIPAY_PROD_PRIVATE_KEY'] || '';
+                    tripayConfig.merchantCode = configMap['TRIPAY_PROD_MERCHANT_CODE'] || '';
+                }
+            }
+        } catch (e) {
+            console.error("Config Loading Failed:", e);
+        }
+
+        // --- GATEWAY FEE CALCULATION (Real-time Sync) ---
         let adminFee = 0;
 
-        // Helper to match logic
-        const getFee = (method: string, channel: string | undefined, price: number) => {
-            // QRIS (0.7%)
-            if (method === 'QRIS' || (method === 'qris' && (!channel || channel === 'qris'))) {
-                return Math.floor(price * 0.007);
-            }
-            // Virtual Account (Flat ~4000-4500)
+        // Local Fallback Logic
+        const getLocalFee = (method: string, channel: string | undefined, price: number) => {
+            if (method === 'QRIS' || (method === 'qris' && (!channel || channel === 'qris'))) return Math.floor(price * 0.007);
             if (method === 'VA' || method === 'va') {
                 if (channel?.includes('mandiri')) return 4000;
                 if (channel?.includes('bri')) return 3500;
-                return 4500; // BCA, BNI, CIMB, Permata default
+                return 4500;
             }
-            // E-Wallet (~1.5% - 2.0%)
             if (method === 'EWALLET' || method === 'ewallet') {
                 if (channel?.includes('shopeepay')) return Math.floor(price * 0.02);
-                return Math.floor(price * 0.015); // DANA, OVO, LinkAja
+                return Math.floor(price * 0.015);
             }
-            // Retail (Flat ~3500)
-            if (method === 'CSTORE' || method === 'cstore') {
-                return 3500;
-            }
+            if (method === 'CSTORE' || method === 'cstore') return 3500;
             return 0;
         };
 
         if (paymentMethod !== 'BALANCE') {
-            adminFee = getFee(paymentMethod, paymentChannel, finalAmount);
+            if (gateway === 'TRIPAY' && tripayConfig.apiKey) {
+                // 📡 Real-time TRIPAY Fee Sync
+                try {
+                    const baseUrl = tripayConfig.mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
+
+                    // Map local channel to Tripay code for calculator
+                    let tripayChannel = paymentChannel || paymentMethod;
+                    const map: any = {
+                        'bca': 'BCAVA', 'mandiri': 'MANDIRIVA', 'bni': 'BNIVA', 'bri': 'BRIVA',
+                        'cimb': 'CIMBVA', 'permata': 'PERMATAVA', 'alfamart': 'ALFAMART',
+                        'indomaret': 'INDOMARET', 'qris': 'QRIS', 'dana': 'DANA',
+                        'ovo': 'OVO', 'shopeepay': 'SHOPEEPAY'
+                    };
+                    if (map[tripayChannel.toLowerCase()]) tripayChannel = map[tripayChannel.toLowerCase()];
+
+                    const feeRes = await axios.get(`${baseUrl}/merchant/fee-calculator`, {
+                        params: { code: tripayChannel, amount: finalAmount },
+                        headers: { 'Authorization': `Bearer ${tripayConfig.apiKey}` },
+                        validateStatus: (status) => status < 999
+                    });
+
+                    if (feeRes.data?.success && feeRes.data.data?.[0]) {
+                        // Tripay returns fee for merchant or customer. 
+                        // We usually want the 'total_fee.merchant' if we markup, 
+                        // or just use whatever they say the 'total_fee.customer' is if passed to customer.
+                        // Here we take 'total_fee.merchant' as the baseline admin fee.
+                        adminFee = feeRes.data.data[0].total_fee.merchant || getLocalFee(paymentMethod, paymentChannel, finalAmount);
+                        console.log(`📡 [TRIPAY-FEE] Real-time Sync: Rp${adminFee} for ${tripayChannel}`);
+                    } else {
+                        adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount);
+                    }
+                } catch (err: any) {
+                    console.error("📡 [TRIPAY-FEE] Sync Failed:", err.response?.data || err.message);
+                    adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount); // Fallback
+                }
+            } else {
+                adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount);
+            }
         }
 
         const totalPayable = finalAmount + adminFee;
@@ -691,7 +756,7 @@ export const createTransaction = async (req: Request, res: Response) => {
 
 
         } else {
-            // B. GATEWAY PAYMENT (TRIPAY / IPAYMU) -> Handled by Java Service
+            // --- GATEWAY PAYMENT (TRIPAY / IPAYMU) -> Handled by Java Service
             // Resolve User for History Linking
             let userIdForTrx = authUserId;
             let targetPhone = guestContact;
@@ -711,54 +776,6 @@ export const createTransaction = async (req: Request, res: Response) => {
                     const u = await prisma.user.findUnique({ where: { id: userIdForTrx } });
                     if (u && u.phoneNumber) targetPhone = u.phoneNumber;
                 } catch (e) { }
-            }
-
-            // --- GATEWAY SELECTION ---
-            let gateway = 'IPAYMU'; // Default
-            let tripayConfig = {
-                mode: 'PRODUCTION', // Default
-                apiKey: '',
-                privateKey: '',
-                merchantCode: ''
-            };
-
-            try {
-                // Fetch All Configs at once to minimize DB calls
-                const configs = await (prisma as any).systemConfig.findMany({
-                    where: {
-                        key: { in: ['PAYMENT_GATEWAY', 'TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_SB_MERCHANT_CODE', 'TRIPAY_PROD_API_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_PROD_MERCHANT_CODE'] }
-                    }
-                });
-
-                const configMap: Record<string, string> = {};
-                configs.forEach((c: any) => configMap[c.key] = c.value);
-
-                // 1. Gateway Selection
-                if (configMap['PAYMENT_GATEWAY']) {
-                    gateway = configMap['PAYMENT_GATEWAY'].toUpperCase();
-                } else {
-                    gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
-                }
-
-                // 2. Tripay Config Selection
-                if (gateway === 'TRIPAY') {
-                    const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
-                    tripayConfig.mode = mode;
-
-                    if (mode === 'SANDBOX') {
-                        tripayConfig.apiKey = configMap['TRIPAY_SB_API_KEY'] || '';
-                        tripayConfig.privateKey = configMap['TRIPAY_SB_PRIVATE_KEY'] || '';
-                        tripayConfig.merchantCode = configMap['TRIPAY_SB_MERCHANT_CODE'] || '';
-                    } else {
-                        tripayConfig.apiKey = configMap['TRIPAY_PROD_API_KEY'] || '';
-                        tripayConfig.privateKey = configMap['TRIPAY_PROD_PRIVATE_KEY'] || '';
-                        tripayConfig.merchantCode = configMap['TRIPAY_PROD_MERCHANT_CODE'] || '';
-                    }
-                }
-
-            } catch (e) {
-                // If DB fails, fallback to ENV
-                gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
             }
 
             // Create Pending Transaction in DB First
