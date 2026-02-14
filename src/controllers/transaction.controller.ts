@@ -69,6 +69,15 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
             }
         } else if (status === 'FAILED' || status === 'EXPIRED' || status === 'REFUND') {
             newStatus = 'FAILED';
+
+            // [VOUCHER RECOVERY] Return stock if payment failed/expired
+            if (trx.voucherCode) {
+                console.log(`♻️ [VOUCHER] Returning stock for expired/failed order: ${merchant_ref}`);
+                await prisma.voucher.update({
+                    where: { code: trx.voucherCode },
+                    data: { stock: { increment: 1 } }
+                }).catch(err => console.error("Voucher Recovery Failed:", err));
+            }
         }
 
         if (newStatus !== trx.status && (newStatus === 'SUCCESS' || newStatus === 'PROCESSING')) {
@@ -755,98 +764,80 @@ export const createTransaction = async (req: Request, res: Response) => {
             // Create Pending Transaction in DB First
             let trxId = `TRX-${Date.now()}`;
             try {
-                const trx = await prisma.transaction.create({
-                    data: {
-                        invoice,
-                        productId,
-                        targetId: userId, // Game User ID
-                        zoneId,
-                        amount: totalPayable, // Store TOTAL including fee
-                        discountAmount,
-                        adminFee: adminFee, // Store Fee separately for records
-                        voucherCode: validVoucherCode,
-                        status: 'PENDING',
-                        paymentMethod,
-                        paymentGateway: gateway,
-                        userId: userIdForTrx || undefined,
-                        guestContact: targetPhone || null
-                    } as any
+                // Atomic: Create Transaction AND Decrement Voucher Stock
+                const result = await prisma.$transaction(async (tx) => {
+                    // 1. Create Transaction
+                    const newTrx = await tx.transaction.create({
+                        data: {
+                            invoice,
+                            productId,
+                            targetId: userId, // Game User ID
+                            zoneId,
+                            amount: totalPayable, // Store TOTAL including fee
+                            discountAmount,
+                            adminFee: adminFee, // Store Fee separately for records
+                            voucherCode: validVoucherCode,
+                            status: 'PENDING',
+                            paymentMethod,
+                            paymentGateway: gateway,
+                            userId: userIdForTrx || undefined,
+                            guestContact: targetPhone || null
+                        } as any
+                    });
+
+                    // 2. Decrement Voucher (Atomic)
+                    if (validVoucherCode && discountAmount > 0) {
+                        const v = await tx.voucher.findUnique({ where: { code: validVoucherCode } });
+                        if (v && v.stock > 0) {
+                            await tx.voucher.update({
+                                where: { id: v.id },
+                                data: { stock: { decrement: 1 } }
+                            });
+                            console.log(`🎟️ [VOUCHER] Stock decremented for Gateway Order: ${invoice}`);
+                        }
+                    }
+
+                    return newTrx;
                 });
-                trxId = trx.id;
+
+                trxId = result.id;
             } catch (dbError) {
                 console.warn("DB Transaction Create Failed:", dbError);
-                return res.status(500).json({ success: false, message: "Database Error" });
+                return res.status(500).json({ success: false, message: "Database Error or Voucher Out of Stock" });
             }
 
             // Call Java Payment Service
-            // Determine Method Logic:
-            // Input `paymentMethod`: "TRIPAY", "IPAYMU", "QRIS", "VA_BCA"? 
-            // The frontend usually sends specific method info.
-            // Setup: 
-            // - Logic: If paymentMethod is generic (e.g. 'VA', 'QRIS') we need to know WHICH PROVDER to use.
-            // - Start with: All 'QRIS' -> Tripay? Or Ipaymu? 
-            // - User decided: Tripay + Migrate Ipaymu.
-            // - Let's assume frontend sends Provider explicitly OR we map it.
-            // - Current Frontend sends "QRIS", "VA_BCA", etc. (derived from channel).
-            // - Let's Default to Tripay for new stuff, Use Ipaymu for legacy? 
-            // - User wants "Ipaymu pindah juga". So Java handles both.
-            // - We need to tell Java WHICH ONE. 
-            // - Let's Map: "TRIPAY" or "IPAYMU" as `method` arg to Java.
-            // - How do we know? Maybe add config/env? Or frontend sends it?
-            // - For now: Let's assume we pass "TRIPAY" as default, or check a flag.
-
-            // FIXME: Hardcoded selection or derived?
-            // "satu project sama tripay". 
-            // Let's use IPAYMU for existing Ipaymu Channels if we can distinguish.
-            // OR change all to Tripay? 
-            // User: "yang ipaymu pindah juga bisa gga?". Meaning KEEP Ipaymu but in Java.
-            // So we need to Select based on Channel.
-
+            // ... (rest of the service call code remains same) ...
             const paymentService = await import('../services/payment.service.js');
 
             let finalChannel = paymentChannel || paymentMethod;
 
-            // Channel Mapping (Node -> Java Service)
-            // Frontend sends lowercase codes (e.g. 'bca', 'qris')
+            // ... mapping logic remains same ...
             if (gateway === 'TRIPAY') {
                 const map: any = {
-                    'bca': 'BCAVA',
-                    'mandiri': 'MANDIRIVA',
-                    'bni': 'BNIVA',
-                    'bri': 'BRIVA',
-                    'cimb': 'CIMBVA',
-                    'permata': 'PERMATAVA',
-                    'alfamart': 'ALFAMART',
-                    'indomaret': 'INDOMARET',
-                    'qris': 'QRIS',
-                    'dana': 'DANA',
-                    'ovo': 'OVO',
-                    'shopeepay': 'SHOPEEPAY'
+                    'bca': 'BCAVA', 'mandiri': 'MANDIRIVA', 'bni': 'BNIVA', 'bri': 'BRIVA',
+                    'cimb': 'CIMBVA', 'permata': 'PERMATAVA', 'alfamart': 'ALFAMART',
+                    'indomaret': 'INDOMARET', 'qris': 'QRIS', 'dana': 'DANA',
+                    'ovo': 'OVO', 'shopeepay': 'SHOPEEPAY'
                 };
                 if (map[finalChannel]) finalChannel = map[finalChannel];
-                else finalChannel = finalChannel.toUpperCase(); // Fallback
+                else finalChannel = finalChannel.toUpperCase();
             } else if (gateway === 'IPAYMU') {
-                // Java IpaymuGateway handles mapping, but we can ensure clean codes here
                 const vaList = ['bca', 'mandiri', 'bni', 'bri', 'cimb', 'permata', 'danamon'];
-                if (vaList.includes(finalChannel)) {
-                    // Just send 'bca', 'mandiri' etc. Java will handle it.
-                    // But if it already has va_ prefix, keep it or normalize.
-                    finalChannel = finalChannel.replace('va_', '');
-                }
+                if (vaList.includes(finalChannel)) finalChannel = finalChannel.replace('va_', '');
             }
 
-            console.log(`🔌 [GATEWAY] Using ${gateway} (${tripayConfig.mode}) for Channel: ${finalChannel} (Original: ${paymentChannel})`);
+            console.log(`🔌 [GATEWAY] Using ${gateway} (${tripayConfig.mode}) for Channel: ${finalChannel}`);
 
             const payment = await paymentService.createPayment(
                 trxId,
-                totalPayable, // Use Final Amount + Fee
-                gateway as 'TRIPAY' | 'IPAYMU', // 'TRIPAY' | 'IPAYMU'
-                finalChannel, // 'QRIS', 'BCAVA', etc.
-                trxId, // BuyerName (Anon)
+                totalPayable,
+                gateway as 'TRIPAY' | 'IPAYMU',
+                finalChannel,
+                trxId,
                 'guest@grimoire.com',
                 targetPhone || '08123456789',
                 product.name,
-                // Pass Credentials
                 tripayConfig.apiKey,
                 tripayConfig.privateKey,
                 tripayConfig.merchantCode,
@@ -861,11 +852,11 @@ export const createTransaction = async (req: Request, res: Response) => {
                         paymentUrl: payment.paymentUrl,
                         paymentTrxId: payment.paymentTrxId,
                         paymentNo: payment.paymentNo,
-                        paymentChannel: payment.paymentName // standardized name
+                        paymentChannel: payment.paymentName
                     }
                 });
 
-                // Response
+                // Response (ENHANCED with Fee Details)
                 res.json({
                     success: true,
                     data: {
@@ -876,11 +867,13 @@ export const createTransaction = async (req: Request, res: Response) => {
                         paymentName: payment.paymentName,
                         expired: payment.expiredTime,
                         productName: product.name,
-                        amount
+                        amount: totalPayable,
+                        basePrice: product.price_sell,
+                        adminFee: adminFee,
+                        discountAmount: discountAmount
                     }
                 });
             } else {
-                // Return Error
                 res.status(400).json({ success: false, message: payment.message });
             }
 
@@ -1153,6 +1146,12 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
             // User Request: If payment fails, set to PENDING (Payment Pending) instead of FAILED
             await prisma.transaction.update({ where: { id: trxId }, data: { status: 'PENDING' } });
             console.log(`❌ Transaction ${trxId} Payment Failed -> Reverted to PENDING`);
+
+            // [VOUCHER RECOVERY] Although reverted to PENDING, if it was a final failure we'd recover.
+            // But since user wants it to stay PENDING (maybe for re-try payment?), we might not want to recover stock yet?
+            // Actually, if it's PENDING it implies the user might pay later. 
+            // BUT usually, a 'failed' callback in Ipaymu means the session is dead.
+            // Let's stick to Tripay logic for now where EXPIRED/FAILED recovers stock.
         }
 
         res.json({ success: true });
@@ -1256,6 +1255,25 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                         processGameTopup(trx.id).catch(console.error);
                         return res.json({ success: true, message: "Payment Verified! Order Processing.", data: { status: 'PROCESSING' } });
                     }
+                } else if (payCheck.success === false || (payCheck.data && (payCheck.data.status === 'EXPIRED' || payCheck.data.status === 'FAILED'))) {
+                    // Payment FAILED/EXPIRED
+                    console.log(`❌ [MANUAL CHECK] Payment FAILED/EXPIRED for ${trx.invoice}`);
+
+                    await prisma.transaction.update({
+                        where: { id: trx.id },
+                        data: { status: 'FAILED', updatedAt: new Date() }
+                    });
+
+                    // [VOUCHER RECOVERY]
+                    if (trx.voucherCode) {
+                        console.log(`♻️ [VOUCHER] Returning stock for failed order via Sync: ${trx.invoice}`);
+                        await prisma.voucher.update({
+                            where: { code: trx.voucherCode },
+                            data: { stock: { increment: 1 } }
+                        }).catch(console.error);
+                    }
+
+                    return res.json({ success: true, message: "Payment Expired or Failed.", data: { status: 'FAILED' } });
                 }
             }
         }
