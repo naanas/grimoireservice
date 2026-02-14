@@ -72,7 +72,8 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
                     data: { paymentTrxId: reference }
                 });
             }
-            await processGameTopup(merchant_ref);
+            // Trigger background process (non-blocking)
+            processGameTopup(merchant_ref).catch(e => console.error("❌ [TRIPAY-CALLBACK] Background Topup Error:", e));
         } else if (newStatus === 'FAILED' && trx.status !== 'FAILED') {
             await prisma.transaction.update({
                 where: { id: merchant_ref },
