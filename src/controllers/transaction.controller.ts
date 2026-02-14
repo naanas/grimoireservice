@@ -450,6 +450,78 @@ export const getProducts = async (req: Request, res: Response) => {
     }
 };
 
+// GET /api/transaction/:id
+export const getTransaction = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const trx = await prisma.transaction.findUnique({
+            where: { id },
+            include: {
+                product: true,
+                user: {
+                    select: { name: true, email: true }
+                }
+            }
+        });
+
+        if (!trx) return res.status(404).json({ success: false, message: 'Transaction not found' });
+
+        return res.json({ success: true, data: trx });
+    } catch (error) {
+        console.error("Get Trx Error:", error);
+        return res.status(500).json({ success: false, message: 'Internal Server Error' });
+    }
+};
+
+// GET /api/transaction/calculate-fee
+export const calculateFee = async (req: Request, res: Response) => {
+    const { code, amount } = req.query;
+    if (!code || !amount) return res.status(400).json({ success: false, message: 'Missing parameters' });
+
+    try {
+        // 1. Fetch Tripay Configs
+        const configs = await (prisma as any).systemConfig.findMany({
+            where: {
+                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] }
+            }
+        });
+        const configMap: any = {};
+        configs.forEach((c: any) => configMap[c.key] = c.value);
+
+        const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+        const apiKey = mode === 'PRODUCTION' ? configMap['TRIPAY_PROD_API_KEY'] : configMap['TRIPAY_SB_API_KEY'];
+        const baseUrl = mode === 'PRODUCTION' ? 'https://tripay.co.id/api' : 'https://tripay.co.id/api-sandbox';
+
+        if (!apiKey) return res.status(500).json({ success: false, message: 'Tripay API Key not configured' });
+
+        // 2. Map channel codes if needed
+        const map: any = {
+            'bca': 'BCAVA', 'mandiri': 'MANDIRIVA', 'bni': 'BNIVA', 'bri': 'BRIVA',
+            'cimb': 'CIMBVA', 'permata': 'PERMATAVA', 'alfamart': 'ALFAMART',
+            'indomaret': 'INDOMARET', 'qris': 'QRIS', 'dana': 'DANA',
+            'ovo': 'OVO', 'shopeepay': 'SHOPEEPAY'
+        };
+        const tripayCode = map[code.toString().toLowerCase()] || code;
+
+        // 3. Call Tripay API
+        const response = await axios.get(`${baseUrl}/merchant/fee-calculator`, {
+            params: { code: tripayCode, amount: parseInt(amount.toString()) },
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+            validateStatus: (status) => status < 999
+        });
+
+        if (response.data?.success && response.data.data?.[0]) {
+            return res.json({ success: true, data: response.data.data[0] });
+        }
+
+        return res.status(400).json({ success: false, message: response.data?.message || 'Calculation Failed' });
+
+    } catch (error: any) {
+        console.error("Calculate Fee Error:", error.message);
+        return res.status(500).json({ success: false, message: 'Internal Server Error' });
+    }
+};
+
 // GET /api/vendor-products
 // Proxy to fetch services specifically from the active Provider (VIP)
 export const getVendorProducts = async (req: Request, res: Response) => {

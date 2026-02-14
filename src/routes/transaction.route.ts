@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createTransaction, getProducts, handleIpaymuCallback, handleTripayCallback, handleVipCallback, getTransaction, getCategories, getCategoryBySlug, createDeposit, getHistory, checkGameId, getVendorProducts, checkTransactionStatus, getBestSellingCategories, getPopularCategories } from '../controllers/transaction.controller.js';
+import { createTransaction, getProducts, handleIpaymuCallback, handleTripayCallback, handleVipCallback, getTransaction, getCategories, getCategoryBySlug, createDeposit, getHistory, checkGameId, getVendorProducts, checkTransactionStatus, getBestSellingCategories, getPopularCategories, calculateFee } from '../controllers/transaction.controller.js';
 import { authenticateToken, optionalAuthenticate } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { createTransactionSchema, createDepositSchema } from '../schemas/transaction.schema.js';
@@ -18,6 +18,7 @@ router.post('/create', validate(createTransactionSchema), createTransaction); //
 router.post('/deposit', authenticateToken, validate(createDepositSchema), createDeposit); // Deposit PROTECTED
 router.post('/check-id', validate(checkGameIdSchema), checkGameId); // Public
 router.get('/vendor-products', getVendorProducts);
+router.get('/calculate-fee', calculateFee);
 router.post('/check-status/:id', checkTransactionStatus);
 router.post('/callback/ipaymu', handleIpaymuCallback);
 router.post('/callback/tripay', handleTripayCallback);
