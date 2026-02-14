@@ -899,15 +899,54 @@ export const createDeposit = async (req: Request, res: Response) => {
 
         const paymentService = await import('../services/payment.service.js');
 
-        // Determine Gateway from ENV
-        const envGateway = process.env.PAYMENT_GATEWAY || 'IPAYMU';
-        const gateway = envGateway.toUpperCase();
+        // --- GATEWAY SELECTION (SYNC WITH SYSTEM CONFIG) --- 🛡️
+        let gateway = 'IPAYMU'; // Default
+        let tripayConfig = {
+            mode: 'PRODUCTION', // Default
+            apiKey: '',
+            privateKey: '',
+            merchantCode: ''
+        };
 
-        let finalChannel = paymentMethod; // e.g. 'VA_BCA'
+        try {
+            const configs = await (prisma as any).systemConfig.findMany({
+                where: {
+                    key: { in: ['PAYMENT_GATEWAY', 'TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_SB_MERCHANT_CODE', 'TRIPAY_PROD_API_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_PROD_MERCHANT_CODE'] }
+                }
+            });
 
-        // Channel Logic for Deposit (Assume Frontend sends correct codes or same mapping needed?)
-        // Frontend likely sends 'va_bca' or 'qris'. 
-        // If Tripay, we might need to map 'va_bca' -> 'BCAVA'.
+            const configMap: Record<string, string> = {};
+            configs.forEach((c: any) => configMap[c.key] = c.value);
+
+            // 1. Gateway Selection
+            if (configMap['PAYMENT_GATEWAY']) {
+                gateway = configMap['PAYMENT_GATEWAY'].toUpperCase();
+            } else {
+                gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
+            }
+
+            // 2. Tripay Config Selection
+            if (gateway === 'TRIPAY') {
+                const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                tripayConfig.mode = mode;
+
+                if (mode === 'SANDBOX') {
+                    tripayConfig.apiKey = configMap['TRIPAY_SB_API_KEY'] || '';
+                    tripayConfig.privateKey = configMap['TRIPAY_SB_PRIVATE_KEY'] || '';
+                    tripayConfig.merchantCode = configMap['TRIPAY_SB_MERCHANT_CODE'] || '';
+                } else {
+                    tripayConfig.apiKey = configMap['TRIPAY_PROD_API_KEY'] || '';
+                    tripayConfig.privateKey = configMap['TRIPAY_PROD_PRIVATE_KEY'] || '';
+                    tripayConfig.merchantCode = configMap['TRIPAY_PROD_MERCHANT_CODE'] || '';
+                }
+            }
+        } catch (e) {
+            gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
+        }
+
+        let finalChannel = paymentMethod;
+
+        // Channel Mapping for Tripay (Deposit logic)
         if (gateway === 'TRIPAY') {
             const map: any = {
                 'va_bca': 'BCAVA',
@@ -916,11 +955,19 @@ export const createDeposit = async (req: Request, res: Response) => {
                 'va_bri': 'BRIVA',
                 'va_cimb': 'CIMBVA',
                 'va_permata': 'PERMATAVA',
-                'qris': 'QRIS'
+                'qris': 'QRIS',
+                'bca': 'BCAVA',
+                'mandiri': 'MANDIRIVA',
+                'bni': 'BNIVA',
+                'bri': 'BRIVA',
+                'cimb': 'CIMBVA',
+                'permata': 'PERMATAVA'
             };
             if (map[finalChannel]) finalChannel = map[finalChannel];
-            else finalChannel = finalChannel.toUpperCase().replace('VA_', '') + 'VA'; // Try heuristic
+            else finalChannel = finalChannel.toUpperCase().replace('VA_', '') + (finalChannel.includes('va') ? 'VA' : '');
         }
+
+        console.log(`🔌 [DEPOSIT-GATEWAY] Using ${gateway} (${tripayConfig.mode}) for User: ${userId}`);
 
         const payment = await paymentService.createPayment(
             trxId,
@@ -930,7 +977,12 @@ export const createDeposit = async (req: Request, res: Response) => {
             user.name || 'User',
             user.email,
             user.phoneNumber || '08123456789',
-            'Deposit Saldo'
+            'Deposit Saldo Grimoire',
+            // Pass Credentials (Important for dynamic config)
+            tripayConfig.apiKey,
+            tripayConfig.privateKey,
+            tripayConfig.merchantCode,
+            tripayConfig.mode
         );
 
         if (!payment.success) {
