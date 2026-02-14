@@ -468,8 +468,8 @@ export const calculateFee = async (req: Request, res: Response) => {
         const configMap: any = {};
         configs.forEach((c: any) => configMap[c.key] = c.value);
 
-        const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
-        const apiKey = mode === 'PRODUCTION' ? configMap['TRIPAY_PROD_API_KEY'] : configMap['TRIPAY_SB_API_KEY'];
+        const mode = (configMap['TRIPAY_MODE'] || 'PRODUCTION').toUpperCase().trim();
+        const apiKey = (mode === 'PRODUCTION' ? configMap['TRIPAY_PROD_API_KEY'] : configMap['TRIPAY_SB_API_KEY'])?.trim();
         const baseUrl = mode === 'PRODUCTION' ? 'https://tripay.co.id/api' : 'https://tripay.co.id/api-sandbox';
 
         if (!apiKey) return res.status(500).json({ success: false, message: 'Tripay API Key not configured' });
