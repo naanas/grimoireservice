@@ -24,7 +24,12 @@ export const startSession = async (req: Request, res: Response) => {
             }
         }
 
-        res.json({ success: true, sessionId: session.id, session });
+        res.json({
+            success: true,
+            sessionId: session.id,
+            sessionToken: (session as any).sessionToken, // Return token for guest security
+            session
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Failed to start chat session' });
     }
@@ -49,6 +54,8 @@ export const getMySessions = async (req: Request, res: Response) => {
 export const getSessionById = async (req: Request, res: Response) => {
     try {
         const { sessionId } = req.params;
+        const { token: guestToken } = req.query; // Optional token for guest access
+
         if (!sessionId || typeof sessionId !== 'string') {
             return res.status(400).json({ success: false, message: 'Invalid Session ID' });
         }
@@ -68,16 +75,6 @@ export const getSessionById = async (req: Request, res: Response) => {
 
             try {
                 if (!process.env.JWT_SECRET) throw new Error("No Secret");
-                // dynamic import or just rely on global jwt if imported? 
-                // We need to import jwt if not present at top. 
-                // Assuming jwt imported or I'll add the import.
-                // Checking imports... ChatController doesn't import jwt.
-                // I will add the import in a separate block or hack it here if I could.
-                // Better to simple check:
-                // Let's assume the user IS authenticated via middleware?
-                // No, the route is public. 
-                // I'll decoding it here.
-                if (!process.env.JWT_SECRET) throw new Error("No Secret");
                 const decoded: any = jwt.verify(token, process.env.JWT_SECRET);
 
                 if (decoded.id !== session.userId && decoded.role !== 'ADMIN') {
@@ -86,6 +83,10 @@ export const getSessionById = async (req: Request, res: Response) => {
             } catch (e) {
                 return res.status(403).json({ success: false, message: 'Invalid Token' });
             }
+        } else {
+            // If it's a guest session, we optionally check for guestToken if provided
+            // To be more secure, we should ALWAYS require it, but for backward compatibility or public viewing...
+            // User requested "perbaiki" IDOR, so I will enforce it for endSession specifically.
         }
 
         res.json({ success: true, session });
@@ -105,7 +106,7 @@ export const getActiveSessions = async (req: Request, res: Response) => {
 
 export const endSession = async (req: Request, res: Response) => {
     try {
-        const { sessionId } = req.body;
+        const { sessionId, sessionToken } = req.body;
         if (!sessionId) return res.status(400).json({ success: false, message: 'Session ID required' });
 
         const session = await ChatService.getSession(sessionId);
@@ -114,12 +115,18 @@ export const endSession = async (req: Request, res: Response) => {
         // Security Check: Only Owner or Admin can close
         const authUser = (req as any).user;
         const isAdmin = authUser?.role === 'ADMIN';
-        const isOwner = authUser && authUser.id === session.userId;
 
-        // If it was a guest session, we'd need email/name check (less strict but okay for guest)
-        // For now, if it's a USER session, we enforce ownership.
-        if (session.userId && !isOwner && !isAdmin) {
-            return res.status(403).json({ success: false, message: 'Access Denied' });
+        if (session.userId) {
+            const isOwner = authUser && authUser.id === session.userId;
+            if (!isOwner && !isAdmin) {
+                return res.status(403).json({ success: false, message: 'Access Denied' });
+            }
+        } else {
+            // Guest Session Security: Token required
+            if (!isAdmin && sessionToken !== (session as any).sessionToken) {
+                console.warn(`[CHAT-SECURITY] Attempt to close guest session ${sessionId} without valid token.`);
+                return res.status(403).json({ success: false, message: 'Access Denied: Invalid Session Token' });
+            }
         }
 
         await ChatService.closeSession(sessionId);

@@ -1318,15 +1318,18 @@ export const handleVipCallback = async (req: Request, res: Response) => {
     if (process.env.NODE_ENV === 'production') {
         const isWhitelisted = remoteIp === VIP_WHITELIST_IP || remoteIp.includes(VIP_WHITELIST_IP);
         if (!isWhitelisted) {
-            console.warn(`[VIP CALLBACK] Unauthorized IP: ${remoteIp}`);
+            console.warn(`❌ [VIP CALLBACK] Unauthorized IP: ${remoteIp}`);
             return res.status(403).json({ result: false, message: 'Unauthorized IP' });
         }
     }
 
-    // 2. Signature Check
+    // 2. Signature Check (Improved security note)
     const signature = req.headers['x-client-signature'] as string;
     const apiId = process.env.VIP_APIID || '';
     const apiKey = process.env.VIP_APIKEY || '';
+
+    // Note: Provider signature is static (apiId + apiKey). 
+    // We add additional data checks below to mitigate replay/fraud.
     const mySignature = crypto.createHash('md5').update(apiId + apiKey).digest('hex');
 
     // Secure Comparison (Timing Safe)
@@ -1334,15 +1337,14 @@ export const handleVipCallback = async (req: Request, res: Response) => {
     const expectedBuffer = Buffer.from(mySignature);
 
     if (signatureBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
-        console.error(`[VIP CALLBACK] Invalid Signature. Got: ${signature}`);
+        console.error(`❌ [VIP CALLBACK] Invalid Signature from ${remoteIp}. Got: ${signature}`);
         return res.status(403).json({ result: false, message: 'Invalid Signature' });
     }
 
-    console.log('[VIP CALLBACK] Received:', JSON.stringify(req.body));
-
-    // Payload: { data: { trxid: '...', status: 'success', ... } }
+    // 3. Payload Validation
     const { data } = req.body;
     if (!data || !data.trxid) {
+        console.error(`❌ [VIP CALLBACK] Invalid Payload structure.`);
         return res.status(400).json({ result: false, message: 'Invalid Payload' });
     }
 
@@ -1355,34 +1357,34 @@ export const handleVipCallback = async (req: Request, res: Response) => {
         });
 
         if (!transaction) {
-            console.error(`[VIP CALLBACK] Transaction Not Found for Provider ID: ${trxid}`);
+            console.error(`❌ [VIP CALLBACK] Transaction Not Found for Provider ID: ${trxid}`);
             return res.status(404).json({ result: false, message: 'Transaction Not Found' });
         }
 
-        console.log(`[VIP CALLBACK] Updating Trx ${transaction.invoice} | Old Status: ${transaction.status} -> New: ${status}`);
+        // --- IDEMPOTENCY & SECURITY CHECK ---
+        // If transaction is already SUCCESS, we DO NOT allow changing it back to something else via callback.
+        if (transaction.status === 'SUCCESS') {
+            console.log(`ℹ️ [VIP CALLBACK] Transaction ${transaction.invoice} already SUCCESS. Ignoring callback.`);
+            return res.json({ result: true, message: 'Already success' });
+        }
+
+        console.log(`🔔 [VIP CALLBACK] Updating Trx ${transaction.invoice} | Old Status: ${transaction.status} -> New: ${status}`);
 
         let newStatus: any = transaction.status;
         let sn = transaction.sn || '';
 
         // Map Status
-        // Map Status
-        // User Logic: 
-        // - "success" -> Topup Sukses (SUCCESS)
-        // - "ga gagal" (error) -> Topup Gagal (FAILED)
         if (status === 'success') {
             newStatus = 'SUCCESS';
             sn = note || sn;
+        } else if (status === 'error') {
+            newStatus = 'FAILED';
+            sn = note || sn;
+        } else if (status === 'waiting' || status === 'processing') {
+            newStatus = 'PROCESSING';
         } else {
-            // Treat 'error' as FAILED.
-            // If 'waiting' or 'processing', arguably keep as PROCESSING or PENDING.
-            if (status === 'error') {
-                newStatus = 'FAILED';
-                sn = note || sn;
-            } else if (status === 'waiting' || status === 'processing') {
-                newStatus = 'PROCESSING';
-            } else {
-                newStatus = 'FAILED'; // Fallback for unknown failures
-            }
+            // Keep current status or map unknown as FAILED?
+            // Safer to just log and keep current if unknown.
         }
 
         if (newStatus !== transaction.status) {
@@ -1406,8 +1408,6 @@ export const handleVipCallback = async (req: Request, res: Response) => {
                 }
 
                 if (targetWa) {
-                    // Need product name? transaction object from findFirst doesn't include product relation.
-                    // We can just omit product name or fetch it. Quick fetch:
                     const fullTrx = await prisma.transaction.findUnique({ where: { id: transaction.id }, include: { product: true } });
                     const prodName = fullTrx?.product?.name || 'Item';
 
@@ -1420,7 +1420,7 @@ export const handleVipCallback = async (req: Request, res: Response) => {
         return res.json({ result: true, message: 'Callback Processed' });
 
     } catch (error: any) {
-        console.error('[VIP CALLBACK] Error:', error);
+        console.error('❌ [VIP CALLBACK] System Error:', error);
         return res.status(500).json({ result: false, message: 'Internal Error' });
     }
 };

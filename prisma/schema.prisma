@@ -151,14 +151,15 @@ model Voucher {
 }
 
 model ChatSession {
-  id        String   @id @default(uuid())
-  user      User?    @relation(fields: [userId], references: [id])
-  userId    String?
-  guestName String?  // For guest users
-  guestEmail String? // Optional contact for guest
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(uuid())
+  user         User?    @relation(fields: [userId], references: [id])
+  userId       String?
+  guestName    String?  // For guest users
+  guestEmail   String? // Optional contact for guest
+  sessionToken String? // Added for security
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
   
   messages  ChatMessage[]
   

@@ -4,11 +4,15 @@ const prisma = new PrismaClient();
 
 export const ChatService = {
     async createSession(data: { userId?: string, guestName?: string, guestEmail?: string }) {
+        const crypto = await import('crypto');
+        const sessionToken = data.userId ? null : crypto.randomBytes(32).toString('hex');
+
         return await prisma.chatSession.create({
             data: {
                 userId: data.userId ?? null,
                 guestName: data.guestName ?? null,
                 guestEmail: data.guestEmail ?? null,
+                sessionToken: sessionToken,
                 isActive: true
             },
             include: {
