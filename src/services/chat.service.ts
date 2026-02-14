@@ -14,7 +14,7 @@ export const ChatService = {
                 guestEmail: data.guestEmail ?? null,
                 sessionToken: sessionToken,
                 isActive: true
-            },
+            } as any,
             include: {
                 messages: true,
                 user: {
