@@ -681,6 +681,58 @@ export const retryTransaction = async (req: Request, res: Response) => {
             }
         }
 
+        // 1.5. MANDATORY GATEWAY CHECK for PENDING Game Topups (User Protection) 🛡️
+        if (!isDeposit && trx.status === 'PENDING') {
+            console.log(`🔍 [SAFE-RETRY] Verifying Gateway status for PENDING Game Topup: ${trx.invoice}...`);
+
+            if (!trx.paymentTrxId) {
+                return res.status(400).json({ success: false, message: 'Payment Reference missing. Cannot verify payment status.' });
+            }
+
+            let payCheck: any = { success: false };
+            const gateway = (trx as any).paymentGateway || 'IPAYMU';
+
+            if (gateway === 'IPAYMU') {
+                const ipaymuService = await import('../services/ipaymu.service.js');
+                payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
+            } else if (gateway === 'TRIPAY') {
+                const configs = await (prisma as any).systemConfig.findMany({
+                    where: { key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] } }
+                });
+                const configMap: Record<string, string> = {};
+                configs.forEach((c: any) => configMap[c.key] = c.value);
+
+                const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                const apiKey = mode === 'SANDBOX' ? configMap['TRIPAY_SB_API_KEY'] : configMap['TRIPAY_PROD_API_KEY'];
+                const baseUrl = mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
+
+                try {
+                    const axios = (await import('axios')).default;
+                    const response = await axios.get(`${baseUrl}/transaction/check-status`, {
+                        params: { reference: trx.paymentTrxId },
+                        headers: { 'Authorization': `Bearer ${apiKey}` },
+                        validateStatus: (status) => status < 999
+                    });
+                    if (response.data?.success && response.data.message?.includes('PAID')) {
+                        payCheck = { success: true, status: 6, statusDesc: 'Berhasil' };
+                    }
+                } catch (err: any) {
+                    console.error(`❌ [TRIPAY] Check Status Error:`, err.message);
+                }
+            }
+
+            if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
+                console.log(`✅ [SAFE-RETRY] Payment confirmed! Updating status to PROCESSING.`);
+                await prisma.transaction.update({
+                    where: { id: trxId },
+                    data: { status: 'PROCESSING', updatedAt: new Date() }
+                });
+                // Continue to provider logic below
+            } else {
+                return res.status(400).json({ success: false, message: 'CRITICAL: Payment is still PENDING at Gateway. Admin cannot retry order until user pays!' });
+            }
+        }
+
         // --- CONTINUE WITH TOPUP (GAME) RETRY LOGIC ---
         console.log(`🔄 [SAFE-RETRY] Analyzing Topup Transaction: ${trx.invoice} (${trxId})`);
 
