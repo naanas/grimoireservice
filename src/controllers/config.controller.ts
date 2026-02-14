@@ -51,8 +51,8 @@ export const updateConfig = async (req: Request, res: Response) => {
     try {
         const { key, value } = req.body;
 
-        if (!key || !value) {
-            return res.status(400).json({ success: false, message: 'Key and Value required' });
+        if (!key) {
+            return res.status(400).json({ success: false, message: 'Key is required' });
         }
 
         if (!(prisma as any).systemConfig) {
