@@ -54,7 +54,11 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
         // Tripay manual: hash = hmac_sha256(json_body, private_key)
         const signature = crypto.createHmac('sha256', privateKey).update(JSON.stringify(req.body)).digest('hex');
 
-        if (signature !== callbackSignature) {
+        // [SECURITY] Use Timing-Safe Comparison to prevent Timing Attacks
+        const signatureBuffer = Buffer.from(signature);
+        const callbackBuffer = Buffer.from(callbackSignature as string);
+
+        if (signatureBuffer.length !== callbackBuffer.length || !crypto.timingSafeEqual(signatureBuffer, callbackBuffer)) {
             console.error(`❌ [TRIPAY-CALLBACK] Invalid Signature. Got: ${callbackSignature} | Expected: ${signature}`);
             return res.status(400).json({ success: false, message: 'Invalid Signature' });
         }
@@ -108,6 +112,18 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
                     data: { balance: { increment: trx.amount } }
                 });
             } else if (trx.type === 'TOPUP' || !trx.type) {
+                // [SECURITY] Decrement Voucher Stock ONLY after payment is confirmed
+                if (trx.voucherCode) {
+                    const v = await prisma.voucher.findUnique({ where: { code: trx.voucherCode } });
+                    if (v && v.stock > 0) {
+                        await prisma.voucher.update({
+                            where: { id: v.id },
+                            data: { stock: { decrement: 1 } }
+                        });
+                        console.log(`🎟️ [VOUCHER] Stock decremented via Callback for Order: ${merchant_ref}`);
+                    }
+                }
+
                 // Trigger Provider for Game Topup
                 processGameTopup(merchant_ref).catch(e => console.error("❌ [TRIPAY-CALLBACK] Background Topup Error:", e));
             }
@@ -856,17 +872,9 @@ export const createTransaction = async (req: Request, res: Response) => {
                         } as any
                     });
 
-                    // 2. Decrement Voucher (Atomic)
-                    if (validVoucherCode && discountAmount > 0) {
-                        const v = await tx.voucher.findUnique({ where: { code: validVoucherCode } });
-                        if (v && v.stock > 0) {
-                            await tx.voucher.update({
-                                where: { id: v.id },
-                                data: { stock: { decrement: 1 } }
-                            });
-                            console.log(`🎟️ [VOUCHER] Stock decremented for Gateway Order: ${invoice}`);
-                        }
-                    }
+                    // 2. Decrement Voucher (MOVED TO CALLBACK FOR SECURITY)
+                    // We no longer decrement here as it causes Reservation/DoS vulnerability.
+                    // Stock is decremented in handleTripayCallback/handleIpaymuCallback after PAID.
 
                     return newTrx;
                 });
@@ -930,6 +938,13 @@ export const createTransaction = async (req: Request, res: Response) => {
                 });
 
                 // Response (ENHANCED with Fee Details)
+                // ⚡ [NOTIFICATION] Send Billing Details via WA
+                const targetWa = targetPhone || activeUser?.phoneNumber;
+                if (targetWa) {
+                    const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n📋 *DETAIL TAGIHAN*\nInvoice: *${invoice}*\nItem: *${product.name}*\nTotal Bayar: *Rp${totalPayable.toLocaleString('id-ID')}*\n---------------------------\n💳 *PEMBAYARAN*\nMetode: *${payment.paymentName?.toUpperCase()}*\nNo. Bayar / Link:\n*${payment.paymentNo || payment.paymentUrl || '-'}*\n\n*Silakan selesaikan pembayaran sebelum batas waktu.*\n---------------------------`;
+                    whatsappService.sendMessage(targetWa, waMsg).catch(err => console.error("WA Billing Error:", err));
+                }
+
                 res.json({
                     success: true,
                     data: {
@@ -973,6 +988,9 @@ export const createDeposit = async (req: Request, res: Response) => {
 
         const invoice = `DEP-${Date.now()}`;
         let trxId = `TRX_DEP_${Date.now()}`; // Consistent ID format
+
+        if (Number(amount) < 1000) return res.status(400).json({ success: false, message: 'Minimum deposit is Rp1.000' });
+        if (Number(amount) > 10000000) return res.status(400).json({ success: false, message: 'Maximum deposit is Rp10.000.000' });
 
         try {
             const trx = await prisma.transaction.create({
@@ -1097,6 +1115,11 @@ export const createDeposit = async (req: Request, res: Response) => {
             }
         });
 
+        // ⚡ [NOTIFICATION] Send Billing Details via WA
+        const contactNum = user.phoneNumber || '08123456789'; // Fallback
+        const waMsg = `💰 *TOPUP SALDO (DEPOSIT)*\n---------------------------\nInvoice: *${invoice}*\nNominal: *Rp${Number(amount).toLocaleString('id-ID')}*\n---------------------------\n💳 *PEMBAYARAN*\nMetode: *${payment.paymentName?.toUpperCase()}*\nNo. Bayar / Link:\n*${payment.paymentNo || payment.paymentUrl || '-'}*\n\n*Saldo akan otomatis ditambahkan setelah pembayaran lunas.*`;
+        whatsappService.sendMessage(contactNum, waMsg).catch(err => console.error("WA Deposit Billing Error:", err));
+
         res.json({
             success: true,
             data: {
@@ -1190,6 +1213,18 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
                     where: { id: trx.userId },
                     data: { balance: { increment: totalPaid } }
                 });
+            } else {
+                // [SECURITY] Decrement Voucher Stock ONLY after payment is confirmed
+                if (trx.voucherCode) {
+                    const v = await prisma.voucher.findUnique({ where: { code: trx.voucherCode } });
+                    if (v && v.stock > 0) {
+                        await prisma.voucher.update({
+                            where: { id: v.id },
+                            data: { stock: { decrement: 1 } }
+                        });
+                        console.log(`🎟️ [VOUCHER] Stock decremented via Ipaymu Callback for Order: ${trxId}`);
+                    }
+                }
             }
 
             console.log(`✅ Transaction ${trxId} (${trx.type}) SUCCESS | Fee: ${fee} | Total: ${totalPaid}`);
@@ -1288,7 +1323,7 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                         });
 
                         const data = response.data;
-                        if (data?.success && data.message?.includes('PAID')) {
+                        if (data?.success && data.message === 'PAID') {
                             payCheck = { success: true, status: 6, statusDesc: 'Berhasil' };
                         } else {
                             console.log(`ℹ️ [TRIPAY] Status check: ${data?.message}`);
@@ -1485,9 +1520,13 @@ export const getTransaction = async (req: Request, res: Response) => {
         }
 
         // Sensitive Data Masking for non-owners (e.g. public status check)
+        // [SECURITY] Enhanced Masking for Guests to prevent IDOR informational leaks
+        const targetIdStr = transaction.targetId || '';
         const safeData = {
             ...transaction,
-            guestContact: isOwner ? transaction.guestContact : '********' + (transaction.guestContact?.slice(-3) || '')
+            targetId: isOwner ? transaction.targetId : (targetIdStr.length > 4 ? targetIdStr.slice(0, 3) + '****' : '****'),
+            guestContact: isOwner ? transaction.guestContact : '********' + (transaction.guestContact?.slice(-3) || ''),
+            paymentNo: isOwner ? transaction.paymentNo : '********'
         };
 
         res.json({ success: true, data: safeData });
@@ -1501,7 +1540,10 @@ const VIP_WHITELIST_IP = '178.248.73.218';
 // POST /api/transaction/callback/vip
 export const handleVipCallback = async (req: Request, res: Response) => {
     // 1. IP Whitelist Check
-    const remoteIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '';
+    // [SECURITY] Mitigation for X-Forwarded-For Spoofing
+    // Only trust headers if we are behind a known proxy. Otherwise, use remoteAddress.
+    const remoteIp = req.socket.remoteAddress || '';
+
     if (process.env.NODE_ENV === 'production') {
         const isWhitelisted = remoteIp === VIP_WHITELIST_IP || remoteIp.includes(VIP_WHITELIST_IP);
         if (!isWhitelisted) {

@@ -717,7 +717,7 @@ export const retryTransaction = async (req: Request, res: Response) => {
                         headers: { 'Authorization': `Bearer ${apiKey}` },
                         validateStatus: (status) => status < 999
                     });
-                    if (response.data?.success && response.data.message?.includes('PAID')) {
+                    if (response.data?.success && response.data.message === 'PAID') {
                         payCheck = { success: true, status: 6, statusDesc: 'Berhasil' };
                     }
                 } catch (err: any) {
