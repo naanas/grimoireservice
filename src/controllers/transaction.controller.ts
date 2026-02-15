@@ -46,8 +46,9 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
             : (configMap['TRIPAY_SB_PRIVATE_KEY'] || process.env.TRIPAY_SB_PRIVATE_KEY);
 
         if (!privateKey) {
-            console.error("❌ [TRIPAY-CALLBACK] Tripay Private Key is missing");
-            return res.status(500).json({ success: false, message: 'Configuration Error' });
+            const missingKey = mode === 'PRODUCTION' ? 'TRIPAY_PROD_PRIVATE_KEY' : 'TRIPAY_SB_PRIVATE_KEY';
+            console.error(`❌ [TRIPAY-CALLBACK] Missing Private Key for ${mode} mode. Please set ${missingKey} in .env or System Config.`);
+            return res.status(500).json({ success: false, message: `Configuration Error: Missing ${missingKey}` });
         }
 
         // 3. Validate Signature
