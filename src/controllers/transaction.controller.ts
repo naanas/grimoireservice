@@ -1300,42 +1300,23 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
 
                 // Unified Status Handling: Ipaymu Status 6=Paid
                 if (payCheck.success && (payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
-                    console.log(`✅ [MANUAL CHECK] Payment found SUCCESS for ${trx.invoice} via ${(trx as any).paymentGateway}`);
+                    console.log(`ℹ️ [MANUAL CHECK] Payment found PAID for ${trx.invoice}, but waiting for Gateway Callback to process.`);
 
                     const isDeposit = trx.type === 'DEPOSIT';
-                    const newStatus = isDeposit ? 'SUCCESS' : 'PROCESSING';
+                    const detectedStatus = isDeposit ? 'SUCCESS' : 'PROCESSING';
 
-                    // Update Transaction
-                    await prisma.transaction.update({
-                        where: { id: trx.id },
-                        data: {
-                            status: newStatus as any,
-                            updatedAt: new Date()
-                        }
+                    const safeData = {
+                        ...trx,
+                        status: trx.status, // Keep DB status
+                        detectedStatus: detectedStatus, // Return what gateway says
+                        guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+                    };
+
+                    return res.json({
+                        success: true,
+                        message: "Payment detected at Gateway. Waiting for system confirmation...",
+                        data: safeData
                     });
-
-                    // ⚡ Real-Time Socket Update
-                    const io = req.app.get('io');
-                    if (io) {
-                        io.to(id).emit('transaction_update', {
-                            status: newStatus,
-                            transactionId: id
-                        });
-                    }
-
-                    if (isDeposit && trx.userId) {
-                        // Add Balance
-                        console.log(`💰 [WALLET] Adding Rp${trx.amount} to User ${trx.userId} via Manual Sync`);
-                        await prisma.user.update({
-                            where: { id: trx.userId },
-                            data: { balance: { increment: trx.amount } }
-                        });
-                        return res.json({ success: true, message: "Payment Verified! Soul Transfused.", data: { status: 'SUCCESS' } });
-                    } else {
-                        // Trigger Provider for Game Topup
-                        processGameTopup(trx.id).catch(console.error);
-                        return res.json({ success: true, message: "Payment Verified! Order Processing.", data: { status: 'PROCESSING' } });
-                    }
                 } else if (payCheck.success === false || (payCheck.data && (payCheck.data.status === 'EXPIRED' || payCheck.data.status === 'FAILED'))) {
                     // Payment FAILED/EXPIRED
                     console.log(`❌ [MANUAL CHECK] Payment FAILED/EXPIRED for ${trx.invoice}`);
