@@ -1448,7 +1448,7 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
 
                 if (newStatus !== trx.status) {
                     await prisma.transaction.update({
-                        where: { id },
+                        where: { id: trx.id },
                         data: {
                             status: newStatus as any,
                             providerStatus: providerStatus,
@@ -1460,10 +1460,10 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                     // ⚡ Real-Time Update
                     const io = req.app.get('io');
                     if (io) {
-                        console.log(`🔌 [SOCKET] Emitting Update to ${id}: ${newStatus}`);
-                        io.to(id).emit('transaction_update', {
+                        console.log(`🔌 [SOCKET] Emitting Update to ${trx.id}: ${newStatus}`);
+                        io.to(trx.id).emit('transaction_update', {
                             status: newStatus,
-                            transactionId: id
+                            transactionId: trx.id
                         });
                     }
 
