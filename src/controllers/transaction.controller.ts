@@ -1281,8 +1281,16 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
             return res.status(400).json({ success: false, message: "Invalid Transaction ID" });
         }
 
-        // 1. Get Transaction
-        const trx = await prisma.transaction.findUnique({ where: { id }, include: { product: true } });
+        // 1. Get Transaction (Search by ID or Invoice)
+        const trx = await prisma.transaction.findFirst({
+            where: {
+                OR: [
+                    { id: id },
+                    { invoice: id }
+                ]
+            },
+            include: { product: true }
+        });
         if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
 
         // A. If PENDING, Check Payment Gateway First
@@ -1340,6 +1348,10 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                 // 3. EXPIRED/FAILED -> Fail
                 let gatewayStatus = 'PENDING';
 
+                const safeData = {
+                    ...trx,
+                    guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+                };
                 if (payCheck.success) {
                     if (payCheck.status === 6 || String(payCheck.statusDesc).toUpperCase() === 'BERHASIL' || String(payCheck.message).toUpperCase() === 'PAID') {
                         gatewayStatus = 'PAID';
@@ -1358,17 +1370,14 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                     const isDeposit = trx.type === 'DEPOSIT';
                     const detectedStatus = isDeposit ? 'SUCCESS' : 'PROCESSING';
 
-                    const safeData = {
-                        ...trx,
-                        status: trx.status, // Keep DB status
-                        detectedStatus: detectedStatus, // Return what gateway says
-                        guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
-                    };
-
                     return res.json({
                         success: true,
                         message: "Payment detected at Gateway. Waiting for system confirmation...",
-                        data: safeData
+                        data: {
+                            ...safeData,
+                            status: trx.status, // Keep DB status
+                            detectedStatus: detectedStatus // Return what gateway says
+                        }
                     });
                 } else if (gatewayStatus === 'EXPIRED' || gatewayStatus === 'FAILED') {
                     // Payment FAILED/EXPIRED
@@ -1392,7 +1401,7 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                 } else {
                     // PENDING / UNPAID
                     console.log(`⏳ [MANUAL CHECK] Payment still PENDING/UNPAID for ${trx.invoice}`);
-                    return res.json({ success: true, message: "Waiting for payment...", data: trx });
+                    return res.json({ success: true, message: "Waiting for payment...", data: safeData });
                 }
             }
         }
@@ -1483,7 +1492,11 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
 
                     return res.json({ success: true, message: "Status Updated", data: safeData });
                 } else {
-                    return res.json({ success: true, message: `Status Unchanged (${providerStatus || 'PENDING'})`, data: trx });
+                    const safeData = {
+                        ...trx,
+                        guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+                    };
+                    return res.json({ success: true, message: `Status Unchanged (${providerStatus || 'PENDING'})`, data: safeData });
                 }
             } else {
                 console.error(`❌ [CHECK-STATUS] VIP Check Failed: ${result.message}`);
@@ -1491,7 +1504,11 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
             }
         }
 
-        return res.json({ success: true, message: "No Updates Available (Not Processing)", data: trx });
+        const safeData = {
+            ...trx,
+            guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+        };
+        return res.json({ success: true, message: "No Updates Available (Not Processing)", data: safeData });
 
     } catch (error: any) {
         console.error("Check Status Error:", error);
