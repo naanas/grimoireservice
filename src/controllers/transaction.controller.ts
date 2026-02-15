@@ -1333,8 +1333,25 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                     }
                 }
 
-                // Unified Status Handling: Ipaymu Status 6=Paid
-                if (payCheck.success && (payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
+                // Unified Status Handling (Standard Payment Logic)
+                // 1. PENDING/UNPAID -> Do Nothing (Wait)
+                // 2. PAID -> Process
+                // 3. EXPIRED/FAILED -> Fail
+                let gatewayStatus = 'PENDING';
+
+                if (payCheck.success) {
+                    if (payCheck.status === 6 || String(payCheck.statusDesc).toUpperCase() === 'BERHASIL' || String(payCheck.message).toUpperCase() === 'PAID') {
+                        gatewayStatus = 'PAID';
+                    } else if (String(payCheck.message).toUpperCase() === 'UNPAID') {
+                        gatewayStatus = 'PENDING';
+                    } else if (String(payCheck.message).toUpperCase() === 'EXPIRED') {
+                        gatewayStatus = 'EXPIRED';
+                    } else if (String(payCheck.message).toUpperCase() === 'FAILED') {
+                        gatewayStatus = 'FAILED';
+                    }
+                }
+
+                if (gatewayStatus === 'PAID') {
                     console.log(`ℹ️ [MANUAL CHECK] Payment found PAID for ${trx.invoice}, but waiting for Gateway Callback to process.`);
 
                     const isDeposit = trx.type === 'DEPOSIT';
@@ -1352,7 +1369,7 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                         message: "Payment detected at Gateway. Waiting for system confirmation...",
                         data: safeData
                     });
-                } else if (payCheck.success === false || (payCheck.data && (payCheck.data.status === 'EXPIRED' || payCheck.data.status === 'FAILED'))) {
+                } else if (gatewayStatus === 'EXPIRED' || gatewayStatus === 'FAILED') {
                     // Payment FAILED/EXPIRED
                     console.log(`❌ [MANUAL CHECK] Payment FAILED/EXPIRED for ${trx.invoice}`);
 
@@ -1371,6 +1388,10 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                     }
 
                     return res.json({ success: true, message: "Payment Expired or Failed.", data: { status: 'FAILED' } });
+                } else {
+                    // PENDING / UNPAID
+                    console.log(`⏳ [MANUAL CHECK] Payment still PENDING/UNPAID for ${trx.invoice}`);
+                    return res.json({ success: true, message: "Waiting for payment...", data: trx });
                 }
             }
         }
