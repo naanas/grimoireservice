@@ -19,6 +19,7 @@
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "@types/crypto-js": "^4.2.2",
+    "@types/nodemailer": "^7.0.10",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
@@ -30,6 +31,7 @@
     "helmet": "^8.1.0",
     "ioredis": "^5.9.2",
     "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^8.0.1",
     "prisma": "^5.22.0",
     "socket.io": "^4.8.3",
     "xlsx": "^0.18.5",

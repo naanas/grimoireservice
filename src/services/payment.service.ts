@@ -1,5 +1,6 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
+import { logger } from '../lib/logger.js';
 dotenv.config();
 
 const PAYMENT_SERVICE_URL = process.env.PAYMENT_SERVICE_URL || 'http://localhost:8081';
@@ -22,7 +23,7 @@ export const createPayment = async (
     adminFee?: number
 ) => {
     try {
-        console.log(`[PAYMENT-SERVICE] Creating ${method} transaction for ${trxId}`);
+        logger.info(`[PAYMENT-SERVICE] Creating ${method} transaction for ${trxId}`);
         const payload: any = {
             transactionId: trxId,
             amount: amount,
@@ -47,7 +48,7 @@ export const createPayment = async (
 
         return response.data;
     } catch (error: any) {
-        console.error('[PAYMENT-SERVICE] Error:', error.response?.data || error.message);
+        logger.error(`[PAYMENT-SERVICE] Error: ${JSON.stringify(error.response?.data || error.message)}`);
         throw new Error(error.response?.data?.message || 'Payment Service Error');
     }
 };

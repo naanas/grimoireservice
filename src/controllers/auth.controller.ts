@@ -2,10 +2,28 @@ import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { OAuth2Client } from 'google-auth-library';
+import { logger } from '../lib/logger.js';
+import crypto from 'crypto';
+import { sendVerificationEmail } from '../services/email.service.js';
+
 if (!process.env.JWT_SECRET) {
     throw new Error("Fatal Error: JWT_SECRET is not defined in environment variables.");
 }
 const JWT_SECRET = process.env.JWT_SECRET;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+const client = new OAuth2Client(GOOGLE_CLIENT_ID);
+
+interface AuthRequest extends Request {
+    user?: {
+        id: string;
+        role: string;
+        phoneNumber?: string | null;
+        email?: string;
+    };
+}
 
 // POST /api/auth/register
 export const register = async (req: Request, res: Response) => {
@@ -39,32 +57,83 @@ export const register = async (req: Request, res: Response) => {
         // 3. Hash Password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // 4. Create User
+        // 4. Generate Verification Token
+        const verificationToken = crypto.randomBytes(32).toString('hex');
+
+        // 5. Create User
         const user = await prisma.user.create({
             data: {
                 name,
                 email,
                 phoneNumber,
                 password: hashedPassword,
-                role: 'USER'
+                role: 'USER',
+                isVerified: false,
+                verificationToken
             }
         });
 
-        // 5. Generate Token
-        const token = jwt.sign({ id: user.id, role: user.role, phoneNumber: user.phoneNumber }, JWT_SECRET, { expiresIn: '7d' });
+        // 6. Send Verification Email
+        // We wait for it to ensure email is valid. If it fails, we might want to warn user.
+        const emailSent = await sendVerificationEmail(email, verificationToken, name);
+        if (!emailSent) {
+            logger.warn(`⚠️ [REGISTER] Failed to send verification email to ${email}`);
+            // Optional: Return warning, but user is created.
+        }
+
+        // 7. Generate Token (Login immediately? Or force verify first?)
+        // Usually, we force verify. So NO token returned, or token with restricted scope?
+        // Let's return success message asking to verify.
 
         res.status(201).json({
             success: true,
-            message: "User registered successfully",
+            message: "Registration successful! Please check your email to verify your account.",
             data: {
                 user: { id: user.id, name: user.name, email: user.email, phoneNumber: user.phoneNumber },
-                token
+                // token: jwtToken // Do not auto-login if verification required
             }
         });
 
     } catch (error: any) {
-        console.error("Register Error:", error);
+        logger.error(`Register Error: ${error}`);
         res.status(500).json({ success: false, message: "Registration failed" });
+    }
+};
+
+// GET /api/auth/verify-email
+export const verifyEmail = async (req: Request, res: Response) => {
+    try {
+        const { token } = req.query;
+
+        if (!token || typeof token !== 'string') {
+            return res.status(400).json({ success: false, message: "Invalid token" });
+        }
+
+        const user = await prisma.user.findFirst({
+            where: { verificationToken: token }
+        });
+
+        if (!user) {
+            return res.status(400).json({ success: false, message: "Invalid or expired verification link." });
+        }
+
+        // Update User
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                isVerified: true,
+                verificationToken: null // Clear token to prevent reuse
+            }
+        });
+
+        logger.info(`✅ [VERIFY] User verified: ${user.email}`);
+
+        // Redirect to Frontend Login
+        return res.redirect(`${FRONTEND_URL}/login?verified=true`);
+
+    } catch (error) {
+        logger.error(`Verify Email Error: ${error}`);
+        res.status(500).json({ success: false, message: "Verification failed" });
     }
 };
 
@@ -77,17 +146,22 @@ export const login = async (req: Request, res: Response) => {
 
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user || !user.password) {
-            console.log(`❌ [LOGIN] User not found or no password for: ${email}`);
+            logger.warn(`❌ [LOGIN] User not found or no password for: ${email}`);
             return res.status(401).json({ success: false, message: "Invalid credentials" });
+        }
+
+        // Check Verification
+        if (!user.isVerified) {
+            return res.status(401).json({ success: false, message: "Please verify your email first." });
         }
 
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-            console.log(`❌ [LOGIN] Password mismatch for: ${email}`);
+            logger.warn(`❌ [LOGIN] Password mismatch for: ${email}`);
             return res.status(401).json({ success: false, message: "Invalid credentials" });
         }
 
-        console.log(`✅ [LOGIN] Success for: ${email}`);
+        logger.info(`✅ [LOGIN] Success for: ${email}`);
 
         const token = jwt.sign({ id: user.id, role: user.role, phoneNumber: user.phoneNumber }, JWT_SECRET, { expiresIn: '7d' });
 
@@ -95,23 +169,32 @@ export const login = async (req: Request, res: Response) => {
             success: true,
             message: "Login successful",
             data: {
-                user: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance, phoneNumber: user.phoneNumber },
+                user: {
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    balance: user.balance,
+                    phoneNumber: user.phoneNumber,
+                    hasPassword: !!user.password
+                },
                 token
             }
         });
 
     } catch (error) {
-        console.error("Login Error:", error);
+        logger.error(`Login Error: ${error}`);
         res.status(500).json({ success: false, message: "Login failed" });
     }
 };
 
 // GET /api/auth/profile
-// GET /api/auth/profile
 export const getProfile = async (req: Request, res: Response) => {
     try {
         // User is attached by middleware
-        const decoded = (req as any).user;
+        const authReq = req as AuthRequest;
+        const decoded = authReq.user;
+
         if (!decoded || !decoded.id) return res.status(401).json({ success: false, message: "Unauthorized" });
 
         const user = await prisma.user.findUnique({ where: { id: decoded.id } });
@@ -119,26 +202,30 @@ export const getProfile = async (req: Request, res: Response) => {
 
         res.json({
             success: true,
-            data: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance, phoneNumber: user.phoneNumber }
+            data: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                balance: user.balance,
+                phoneNumber: user.phoneNumber,
+                hasPassword: !!user.password
+            }
         });
     } catch (error) {
-        console.error("Auth Error:", error);
+        logger.error(`Auth Error: ${error}`);
         res.status(401).json({ success: false, message: "Unauthorized" });
     }
 };
 
 // POST /api/auth/google
-import { OAuth2Client } from 'google-auth-library';
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
 export const googleLogin = async (req: Request, res: Response) => {
     try {
         const { token } = req.body;
         if (!token) return res.status(400).json({ success: false, message: "Google token is required" });
 
-        const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
         if (!GOOGLE_CLIENT_ID) {
-            console.error("GOOGLE_CLIENT_ID is not set in environment variables");
+            logger.error("GOOGLE_CLIENT_ID is not set in environment variables");
             return res.status(500).json({ success: false, message: "Server configuration error" });
         }
 
@@ -158,21 +245,21 @@ export const googleLogin = async (req: Request, res: Response) => {
         let user = await prisma.user.findUnique({ where: { email } });
 
         if (!user) {
-            // Create new user
-            // Note: Password is required in schema but nullable? No, schema says `password String?` so it is nullable.
-            // However, we might need a phone number. Google doesn't always provide it. 
-            // We'll set a placeholder or make it optional in schema?
-            // Checking schema: phoneNumber String? @unique. It is nullable.
-
+            // Create new user (Google Auth is auto-verified)
             user = await prisma.user.create({
                 data: {
                     email,
                     name: name || "Google User",
                     password: null, // No password for OAuth users
                     role: 'USER',
-                    // We don't have phone number from Google usually, so we leave it null.
+                    isVerified: true // Google Users are verified
                 }
             });
+        } else {
+            // If user exists but not verified (e.g. tried registering manually but didn't verify), verify them now since they used Google?
+            if (!user.isVerified) {
+                await prisma.user.update({ where: { id: user.id }, data: { isVerified: true } });
+            }
         }
 
         // Generate Token
@@ -186,13 +273,77 @@ export const googleLogin = async (req: Request, res: Response) => {
             success: true,
             message: "Google Login successful",
             data: {
-                user: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance, phoneNumber: user.phoneNumber },
+                user: {
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    balance: user.balance,
+                    phoneNumber: user.phoneNumber,
+                    hasPassword: !!user.password
+                },
                 token: jwtToken
             }
         });
 
     } catch (error) {
-        console.error("Google Login Error:", error);
+        logger.error(`Google Login Error: ${error}`);
         res.status(500).json({ success: false, message: "Google Login failed" });
+    }
+};
+
+// POST /api/auth/complete-profile
+export const completeProfile = async (req: Request, res: Response) => {
+    try {
+        const authReq = req as AuthRequest;
+        const userId = authReq.user?.id;
+        const { phoneNumber, password } = req.body;
+
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized" });
+        if (!phoneNumber || !password) {
+            return res.status(400).json({ success: false, message: "Phone number and password are required" });
+        }
+
+        // Check if phone number is already used by another user
+        const existingPhone = await prisma.user.findFirst({
+            where: {
+                phoneNumber,
+                NOT: { id: userId }
+            }
+        });
+
+        if (existingPhone) {
+            return res.status(400).json({ success: false, message: "Phone number already in use" });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const updatedUser = await prisma.user.update({
+            where: { id: userId },
+            data: {
+                phoneNumber,
+                password: hashedPassword
+            }
+        });
+
+        logger.info(`✅ [PROFILE] User ${userId} completed profile.`);
+
+        res.json({
+            success: true,
+            message: "Profile completed successfully",
+            data: {
+                id: updatedUser.id,
+                name: updatedUser.name,
+                email: updatedUser.email,
+                role: updatedUser.role,
+                balance: updatedUser.balance,
+                phoneNumber: updatedUser.phoneNumber,
+                hasPassword: !!updatedUser.password
+            }
+        });
+
+    } catch (error) {
+        logger.error(`Complete Profile Error: ${error}`);
+        res.status(500).json({ success: false, message: "Failed to complete profile" });
     }
 };
