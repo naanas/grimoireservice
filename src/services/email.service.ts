@@ -16,7 +16,7 @@ const transporter = nodemailer.createTransport({
     greetingTimeout: 5000,    // 5 seconds
     socketTimeout: 10000,     // 10 seconds
     family: 4,                // Force IPv4 to avoid ENETUNREACH on IPv6
-});
+} as nodemailer.TransportOptions);
 
 export const sendVerificationEmail = async (to: string, token: string, name: string) => {
     try {
