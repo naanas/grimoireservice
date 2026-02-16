@@ -126,3 +126,73 @@ export const getProfile = async (req: Request, res: Response) => {
         res.status(401).json({ success: false, message: "Unauthorized" });
     }
 };
+
+// POST /api/auth/google
+import { OAuth2Client } from 'google-auth-library';
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+export const googleLogin = async (req: Request, res: Response) => {
+    try {
+        const { token } = req.body;
+        if (!token) return res.status(400).json({ success: false, message: "Google token is required" });
+
+        const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+        if (!GOOGLE_CLIENT_ID) {
+            console.error("GOOGLE_CLIENT_ID is not set in environment variables");
+            return res.status(500).json({ success: false, message: "Server configuration error" });
+        }
+
+        const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: GOOGLE_CLIENT_ID,
+        });
+
+        const payload = ticket.getPayload();
+        if (!payload || !payload.email) {
+            return res.status(400).json({ success: false, message: "Invalid Google Token" });
+        }
+
+        const { email, name } = payload;
+
+        // Check if user exists
+        let user = await prisma.user.findUnique({ where: { email } });
+
+        if (!user) {
+            // Create new user
+            // Note: Password is required in schema but nullable? No, schema says `password String?` so it is nullable.
+            // However, we might need a phone number. Google doesn't always provide it. 
+            // We'll set a placeholder or make it optional in schema?
+            // Checking schema: phoneNumber String? @unique. It is nullable.
+
+            user = await prisma.user.create({
+                data: {
+                    email,
+                    name: name || "Google User",
+                    password: null, // No password for OAuth users
+                    role: 'USER',
+                    // We don't have phone number from Google usually, so we leave it null.
+                }
+            });
+        }
+
+        // Generate Token
+        const jwtToken = jwt.sign(
+            { id: user.id, role: user.role, email: user.email },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.json({
+            success: true,
+            message: "Google Login successful",
+            data: {
+                user: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance, phoneNumber: user.phoneNumber },
+                token: jwtToken
+            }
+        });
+
+    } catch (error) {
+        console.error("Google Login Error:", error);
+        res.status(500).json({ success: false, message: "Google Login failed" });
+    }
+};
