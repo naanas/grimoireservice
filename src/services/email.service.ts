@@ -11,11 +11,13 @@ const transporter = nodemailer.createTransport({
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
     },
-    // Timeouts to prevent hanging
-    connectionTimeout: 10000, // 10 seconds
-    greetingTimeout: 5000,    // 5 seconds
-    socketTimeout: 10000,     // 10 seconds
-    family: 4,                // Force IPv4 to avoid ENETUNREACH on IPv6
+    // Timeouts to prevent hanging (increased for slow Render connections)
+    connectionTimeout: 60000, // 60 seconds
+    greetingTimeout: 30000,   // 30 seconds
+    socketTimeout: 60000,     // 60 seconds
+    family: 4,                // Force IPv4
+    debug: true,              // Show low-level debug logs
+    logger: true              // Log to console
 } as nodemailer.TransportOptions);
 
 export const sendVerificationEmail = async (to: string, token: string, name: string) => {
