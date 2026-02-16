@@ -4,21 +4,18 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: Number(process.env.SMTP_PORT) || 465,
-    secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+    service: 'gmail',
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
     },
-    // Timeouts to prevent hanging (increased for slow Render connections)
+    // Timeouts to prevent hanging
     connectionTimeout: 60000, // 60 seconds
     greetingTimeout: 30000,   // 30 seconds
     socketTimeout: 60000,     // 60 seconds
-    family: 4,                // Force IPv4
     debug: true,              // Show low-level debug logs
     logger: true              // Log to console
-} as nodemailer.TransportOptions);
+});
 
 export const sendVerificationEmail = async (to: string, token: string, name: string) => {
     try {
