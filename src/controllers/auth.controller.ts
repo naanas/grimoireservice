@@ -221,7 +221,7 @@ export const getProfile = async (req: Request, res: Response) => {
 // POST /api/auth/google
 export const googleLogin = async (req: Request, res: Response) => {
     try {
-        const { token } = req.body;
+        const { token, mode } = req.body;
         if (!token) return res.status(400).json({ success: false, message: "Google token is required" });
 
         if (!GOOGLE_CLIENT_ID) {
@@ -245,6 +245,10 @@ export const googleLogin = async (req: Request, res: Response) => {
         let user = await prisma.user.findUnique({ where: { email } });
 
         if (!user) {
+            if (mode === 'login') {
+                return res.status(404).json({ success: false, message: "Google Account not registered. Please sign up first." });
+            }
+
             // Create new user (Google Auth is auto-verified)
             user = await prisma.user.create({
                 data: {
@@ -302,6 +306,11 @@ export const completeProfile = async (req: Request, res: Response) => {
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized" });
         if (!phoneNumber || !password) {
             return res.status(400).json({ success: false, message: "Phone number and password are required" });
+        }
+
+        // Validate Phone Format (Basic)
+        if (!phoneNumber.startsWith('08') && !phoneNumber.startsWith('62')) {
+            return res.status(400).json({ success: false, message: "Invalid Phone Number format (Use 08xx or 62xx)" });
         }
 
         // Check if phone number is already used by another user
