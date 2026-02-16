@@ -41,7 +41,8 @@ export const register = async (req: Request, res: Response) => {
         }
 
         // 2. Check if user exists (Email OR Phone)
-        const existingUser = await prisma.user.findFirst({
+        // 2. Check if user exists (Email OR Phone)
+        let user = await prisma.user.findFirst({
             where: {
                 OR: [
                     { email },
@@ -50,28 +51,43 @@ export const register = async (req: Request, res: Response) => {
             }
         });
 
-        if (existingUser) {
-            return res.status(400).json({ success: false, message: "Email or Phone Number already registered" });
-        }
-
         // 3. Hash Password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // 4. Generate Verification Token
         const verificationToken = crypto.randomBytes(32).toString('hex');
 
-        // 5. Create User
-        const user = await prisma.user.create({
-            data: {
-                name,
-                email,
-                phoneNumber,
-                password: hashedPassword,
-                role: 'USER',
-                isVerified: false,
-                verificationToken
+        if (user) {
+            if (user.isVerified) {
+                return res.status(400).json({ success: false, message: "Email or Phone Number already registered" });
             }
-        });
+
+            // Handle Unverified Re-registration (Overwrite)
+            logger.info(`♻️ [REGISTER] Overwriting unverified user: ${user.email}`);
+
+            user = await prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    name,
+                    email,
+                    phoneNumber,
+                    password: hashedPassword,
+                    verificationToken
+                }
+            });
+        } else {
+            // 5. Create User
+            user = await prisma.user.create({
+                data: {
+                    name,
+                    email,
+                    phoneNumber,
+                    password: hashedPassword,
+                    role: 'USER',
+                    isVerified: false,
+                    verificationToken
+                }
+            });
+        }
 
         // 6. Send Verification Email
         // We wait for it to ensure email is valid. If it fails, we might want to warn user.
