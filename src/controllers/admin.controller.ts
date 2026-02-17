@@ -802,3 +802,177 @@ export const retryTransaction = async (req: Request, res: Response) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
+// ===== PAYMENT METHOD MANAGEMENT =====
+
+// Payment channels list (imported from frontend for consistency)
+const PAYMENT_CHANNELS = [
+    { code: 'qris', name: 'QRIS', method: 'qris', group: 'QRIS' },
+    { code: 'bca', name: 'BCA Virtual Account', method: 'va', group: 'Virtual Account' },
+    { code: 'mandiri', name: 'Mandiri Virtual Account', method: 'va', group: 'Virtual Account' },
+    { code: 'bni', name: 'BNI Virtual Account', method: 'va', group: 'Virtual Account' },
+    { code: 'bri', name: 'BRI Virtual Account', method: 'va', group: 'Virtual Account' },
+    { code: 'cimb', name: 'CIMB Niaga VA', method: 'va', group: 'Virtual Account' },
+    { code: 'permata', name: 'Permata Virtual Account', method: 'va', group: 'Virtual Account' },
+    { code: 'indomaret', name: 'Indomaret', method: 'cstore', group: 'Retail' },
+    { code: 'alfamart', name: 'Alfamart', method: 'cstore', group: 'Retail' },
+    { code: 'dana', name: 'DANA', method: 'ewallet', group: 'E-Wallet' },
+    { code: 'ovo', name: 'OVO', method: 'ewallet', group: 'E-Wallet' },
+    { code: 'shopeepay', name: 'ShopeePay', method: 'ewallet', group: 'E-Wallet' },
+    { code: 'linkaja', name: 'LinkAja', method: 'ewallet', group: 'E-Wallet' }
+];
+
+// GET /api/admin/payment-methods - Get all payment methods with status
+export const getPaymentMethods = async (req: Request, res: Response) => {
+    try {
+        // Get all payment method configs from SystemConfig
+        const configs = await (prisma as any).systemConfig.findMany({
+            where: {
+                key: {
+                    startsWith: 'payment_method_'
+                }
+            }
+        });
+
+        // Create a map of code -> status
+        const statusMap: Record<string, boolean> = {};
+        configs.forEach((config: any) => {
+            const code = config.key.replace('payment_method_', '');
+            statusMap[code] = config.value === 'active';
+        });
+
+        // Return all payment methods with their active status
+        const methods = PAYMENT_CHANNELS.map(channel => ({
+            ...channel,
+            active: statusMap[channel.code] !== undefined ? statusMap[channel.code] : true // default active
+        }));
+
+        res.json({ success: true, data: methods });
+    } catch (error: any) {
+        console.error("Get Payment Methods Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// POST /api/admin/payment-methods/toggle - Toggle payment method active/inactive
+export const togglePaymentMethod = async (req: Request, res: Response) => {
+    try {
+        const { code, active } = req.body;
+
+        if (!code) {
+            return res.status(400).json({ success: false, message: 'Payment method code is required' });
+        }
+
+        // Validate that this is a valid payment method
+        const validMethod = PAYMENT_CHANNELS.find(ch => ch.code === code);
+        if (!validMethod) {
+            return res.status(400).json({ success: false, message: 'Invalid payment method code' });
+        }
+
+        // Update or create SystemConfig entry
+        const key = `payment_method_${code}`;
+        const value = active ? 'active' : 'inactive';
+
+        await (prisma as any).systemConfig.upsert({
+            where: { key },
+            update: { value },
+            create: { key, value, description: `Status for ${validMethod.name}` }
+        });
+
+        console.log(`[PAYMENT-METHOD] ${code} set to ${value}`);
+
+        res.json({
+            success: true,
+            message: `Payment method ${validMethod.name} ${active ? 'enabled' : 'disabled'}`,
+            data: { code, active }
+        });
+    } catch (error: any) {
+        console.error("Toggle Payment Method Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ===== REVIEW MODERATION =====
+
+// GET /api/admin/reviews - Get all reviews (pending + approved)
+export const getAllReviews = async (req: Request, res: Response) => {
+    try {
+        const { pending } = req.query;
+
+        const whereClause = pending === 'true' ? { isApproved: false } : {};
+
+        const reviews = await (prisma as any).review.findMany({
+            where: whereClause,
+            include: {
+                user: {
+                    select: {
+                        name: true,
+                        email: true
+                    }
+                },
+                category: {
+                    select: {
+                        name: true,
+                        slug: true
+                    }
+                }
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        });
+
+        res.json({ success: true, data: reviews });
+    } catch (error: any) {
+        console.error("Get All Reviews Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// PATCH /api/admin/reviews/:id/approve
+export const approveReview = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+
+        const review = await (prisma as any).review.update({
+            where: { id },
+            data: { isApproved: true },
+            include: {
+                user: { select: { name: true, email: true } },
+                category: { select: { name: true } }
+            }
+        });
+
+        console.log(`[REVIEW] Approved review ${id} for ${review.category.name}`);
+
+        res.json({
+            success: true,
+            message: 'Review approved successfully',
+            data: review
+        });
+    } catch (error: any) {
+        console.error("Approve Review Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// DELETE /api/admin/reviews/:id
+export const deleteReview = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+
+        await (prisma as any).review.delete({
+            where: { id }
+        });
+
+        console.log(`[REVIEW] Deleted review ${id}`);
+
+        res.json({
+            success: true,
+            message: 'Review deleted successfully'
+        });
+    } catch (error: any) {
+        console.error("Delete Review Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};

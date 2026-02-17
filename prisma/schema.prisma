@@ -37,6 +37,7 @@ model User {
 
   transactions Transaction[]
   chatSessions ChatSession[]
+  reviews Review[]
 
   @@map("users")
 }
@@ -58,6 +59,7 @@ model Category {
   updatedAt DateTime  @updatedAt
   
   products  Product[]
+  reviews Review[]
 
   @@map("categories")
 }
@@ -191,4 +193,24 @@ model SystemConfig {
   updatedAt DateTime @updatedAt
 
   @@map("system_configs")
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  categoryId String
+  
+  rating     Int      // 1-5 stars
+  comment    String?  // Optional text review
+  
+  isApproved Boolean  @default(false) // Admin moderation
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  @@map("reviews")
+  @@index([categoryId])
+  @@index([userId])
+  @@unique([userId, categoryId]) // One review per user per category
 }

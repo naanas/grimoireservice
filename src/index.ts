@@ -200,6 +200,15 @@ app.use('/api', transactionRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/chat', chatRoutes);
 
+// Payment methods (public)
+import paymentRoutes from './routes/payment.route.js';
+app.use('/api/payment', paymentRoutes);
+
+// Reviews (public + protected)
+import reviewRoutes from './routes/review.route.js';
+app.use('/api/reviews', reviewRoutes);
+
+
 app.get('/', (req, res) => {
     res.send('Grimoire Coins Backend is Running! 🩸');
 });
