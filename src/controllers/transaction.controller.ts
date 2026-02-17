@@ -829,7 +829,6 @@ export const createTransaction = async (req: Request, res: Response) => {
             // --- GATEWAY PAYMENT (TRIPAY / IPAYMU) -> Handled by Java Service
             // Resolve User for History Linking
             let userIdForTrx = authUserId;
-            let targetPhone = guestContact;
 
             if (!userIdForTrx && req.headers.authorization) {
                 try {
@@ -845,8 +844,18 @@ export const createTransaction = async (req: Request, res: Response) => {
             if (userIdForTrx) {
                 try {
                     activeUser = await prisma.user.findUnique({ where: { id: userIdForTrx } });
-                    if (activeUser && activeUser.phoneNumber) targetPhone = activeUser.phoneNumber;
                 } catch (e) { }
+            }
+
+            // Resolve phone: prioritize guestContact, then user.phoneNumber
+            let targetPhone = guestContact || activeUser?.phoneNumber || null;
+
+            // Validate phone number is present (critical for payment gateway)
+            if (!targetPhone) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'WhatsApp number is required for payment. Please provide your contact number.'
+                });
             }
 
             // Create Pending Transaction in DB First
@@ -916,7 +925,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                 finalChannel,
                 activeUser?.name || 'Guest',
                 activeUser?.email || 'guest@grimoire.com',
-                targetPhone || '08123456789',
+                targetPhone, // Already validated above
                 product.name,
                 tripayConfig.apiKey,
                 tripayConfig.privateKey,
