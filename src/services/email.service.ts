@@ -1,31 +1,23 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { logger } from '../lib/logger.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-    },
-    // Timeouts to prevent hanging
-    connectionTimeout: 60000, // 60 seconds
-    greetingTimeout: 30000,   // 30 seconds
-    socketTimeout: 60000,     // 60 seconds
-    debug: true,              // Show low-level debug logs
-    logger: true              // Log to console
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 export const sendVerificationEmail = async (to: string, token: string, name: string) => {
     try {
         const verificationUrl = `${process.env.BACKEND_URL || 'http://localhost:4000'}/api/auth/verify-email?token=${token}`;
 
-        logger.info(`📧 [EMAIL] Sending verification email to ${to}`);
+        logger.info(`📧 [EMAIL] Sending verification email to ${to} via Resend`);
 
-        const info = await transporter.sendMail({
-            from: `"${process.env.APP_NAME || 'Grimoire Coins'}" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
-            to,
+        // Use 'onboarding@resend.dev' if domain is not yet verified for testing
+        // Once verified, use 'support@grimoirecoins.store' or consistent sender
+        const fromAddress = process.env.SMTP_FROM || 'Grimoire Coins <support@grimoirecoins.store>';
+
+        const { data, error } = await resend.emails.send({
+            from: fromAddress,
+            to: [to],
             subject: 'Verifikasi Email Anda - Grimoire Coins',
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
@@ -46,10 +38,15 @@ export const sendVerificationEmail = async (to: string, token: string, name: str
             `,
         });
 
-        logger.info(`✅ [EMAIL] Sent: ${info.messageId}`);
+        if (error) {
+            logger.error(`❌ [EMAIL] Resend Error: ${error.message}`);
+            return false;
+        }
+
+        logger.info(`✅ [EMAIL] Sent via Resend ID: ${data?.id}`);
         return true;
     } catch (error: any) {
-        logger.error(`❌ [EMAIL] Failed to send: ${error.message}`);
+        logger.error(`❌ [EMAIL] Unexpected Error: ${error.message}`);
         return false;
     }
 };
