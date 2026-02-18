@@ -9,6 +9,9 @@ import jwt from 'jsonwebtoken';
 
 dotenv.config();
 
+// FIX: Allow self-signed certificates for development/internal (fixes "UNABLE_TO_VERIFY_LEAF_SIGNATURE")
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 import helmet from 'helmet';
 
 const app = express();

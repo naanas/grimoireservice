@@ -1574,7 +1574,7 @@ export const getTransaction = async (req: Request, res: Response) => {
             ...transaction,
             targetId: isOwner ? transaction.targetId : (targetIdStr.length > 4 ? targetIdStr.slice(0, 3) + '****' : '****'),
             guestContact: isOwner ? transaction.guestContact : '********' + (transaction.guestContact?.slice(-3) || ''),
-            paymentNo: isOwner ? transaction.paymentNo : '********'
+            paymentNo: transaction.paymentNo
         };
 
         res.json({ success: true, data: safeData });

@@ -106,11 +106,11 @@ model Transaction {
   
   status          TransactionStatus @default(PENDING)
   paymentMethod   String            // QRIS, VA_BCA, etc.
-  paymentUrl      String?           // URL/QR String from Ipaymu
+  paymentUrl      String?           @db.Text // URL/QR String from Ipaymu
   paymentTrxId    String?           // ID from Ipaymu
   paymentGateway  String?           // TRIPAY, IPAYMU, or BALANCE
   paymentChannel  String?           // e.g. "bca", "qris" (Saved from Callback)
-  paymentNo       String?           // e.g. VA Number (Saved from Callback)
+  paymentNo       String?           @db.Text // e.g. VA Number (Saved from Callback)
   
   providerTrxId   String?           // ID from Apigames
   providerStatus  String?           // Status from Apigames
