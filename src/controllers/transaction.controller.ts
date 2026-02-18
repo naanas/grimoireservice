@@ -372,42 +372,23 @@ export const getBestSellingCategories = async (req: Request, res: Response) => {
 // GET /api/categories/popular
 export const getPopularCategories = async (req: Request, res: Response) => {
     try {
-        // Defined as "Trending" (Last 7 Days)
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
         const result: any[] = await prisma.$queryRaw`
-             SELECT 
-                MIN(c.id) as id, 
-                COALESCE(c."brand", c.name) as name, 
-                MIN(c.slug) as slug, 
-                MIN(c.image) as image, 
-                COUNT(t.id) as trend_score
-            FROM transactions t
-            JOIN products p ON t."productId" = p.id
-            JOIN categories c ON p."categoryId" = c.id
-            WHERE t.status = 'SUCCESS' AND t."createdAt" >= ${sevenDaysAgo}
-            GROUP BY COALESCE(c."brand", c.name)
-            ORDER BY trend_score DESC
-            LIMIT 10
-        `;
-
-        // Fallback: If no trending data (new app), return random or all time
-        if (result.length === 0) {
-            const fallback: any[] = await prisma.$queryRaw`
                 SELECT 
                     MIN(c.id) as id, 
-                    COALESCE(c.brand, c.name) as name, 
+                    COALESCE(c."brand", c.name) as name, 
                     MIN(c.slug) as slug, 
                     MIN(c.image) as image, 
-                    0 as total_sales
+                    0 as trend_score
                 FROM categories c
                 WHERE c."isActive" = true
-                GROUP BY COALESCE(c.brand, c.name)
+                GROUP BY COALESCE(c."brand", c.name)
                 ORDER BY RANDOM()
                 LIMIT 10
             `;
-            return res.json({ success: true, data: fallback });
+
+        // Fallback (Not needed if we query Categories directly, but keeping structure)
+        if (result.length === 0) {
+            return res.json({ success: true, data: [] });
         }
 
         const formatted = result.map(item => ({
@@ -951,8 +932,15 @@ export const createTransaction = async (req: Request, res: Response) => {
                 // ⚡ [NOTIFICATION] Send Billing Details via WA
                 const targetWa = targetPhone || activeUser?.phoneNumber;
                 if (targetWa) {
+                    console.log(`📨 [WA] Sending Bill Notification to: ${targetWa} for Invoice: ${invoice}`);
+                    // Ensure number formatting (e.g. 08xx -> 628xx) - Service likely handles it, but let's log any errors
                     const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n📋 *DETAIL TAGIHAN*\nInvoice: *${invoice}*\nItem: *${product.name}*\nTotal Bayar: *Rp${totalPayable.toLocaleString('id-ID')}*\n---------------------------\n💳 *PEMBAYARAN*\nMetode: *${payment.paymentName?.toUpperCase()}*\nNo. Bayar / Link:\n*${payment.paymentNo || payment.paymentUrl || '-'}*\n\n*Silakan selesaikan pembayaran sebelum batas waktu.*\n---------------------------`;
-                    whatsappService.sendMessage(targetWa, waMsg).catch(err => console.error("WA Billing Error:", err));
+
+                    whatsappService.sendMessage(targetWa, waMsg)
+                        .then(() => console.log(`✅ [WA] Bill Notification Sent`))
+                        .catch(err => console.error("❌ [WA] Billing Notification Failed:", err));
+                } else {
+                    console.warn(`⚠️ [WA] No target phone number found for Bill Notification. User: ${activeUser?.name}, GuestContact: ${guestContact}`);
                 }
 
                 res.json({
@@ -1127,8 +1115,13 @@ export const createDeposit = async (req: Request, res: Response) => {
 
         // ⚡ [NOTIFICATION] Send Billing Details via WA
         const contactNum = user.phoneNumber || '08123456789'; // Fallback
-        const waMsg = `💰 *TOPUP SALDO (DEPOSIT)*\n---------------------------\nInvoice: *${invoice}*\nNominal: *Rp${Number(amount).toLocaleString('id-ID')}*\n---------------------------\n💳 *PEMBAYARAN*\nMetode: *${payment.paymentName?.toUpperCase()}*\nNo. Bayar / Link:\n*${payment.paymentNo || payment.paymentUrl || '-'}*\n\n*Saldo akan otomatis ditambahkan setelah pembayaran lunas.*`;
-        whatsappService.sendMessage(contactNum, waMsg).catch(err => console.error("WA Deposit Billing Error:", err));
+        if (contactNum && contactNum !== '08123456789') {
+            console.log(`📨 [WA] Sending Deposit Bill to: ${contactNum}`);
+            const waMsg = `💰 *TOPUP SALDO (DEPOSIT)*\n---------------------------\nInvoice: *${invoice}*\nNominal: *Rp${Number(amount).toLocaleString('id-ID')}*\n---------------------------\n💳 *PEMBAYARAN*\nMetode: *${payment.paymentName?.toUpperCase()}*\nNo. Bayar / Link:\n*${payment.paymentNo || payment.paymentUrl || '-'}*\n\n*Saldo akan otomatis ditambahkan setelah pembayaran lunas.*`;
+            whatsappService.sendMessage(contactNum, waMsg)
+                .then(() => console.log(`✅ [WA] Deposit Bill Sent`))
+                .catch(err => console.error("❌ [WA] Deposit Billing Error:", err));
+        }
 
         res.json({
             success: true,
