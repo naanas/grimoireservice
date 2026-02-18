@@ -11,7 +11,7 @@ export const getConfig = async (req: Request, res: Response) => {
             configs.forEach((c: any) => {
                 // Filter out sensitive keys
                 const key = c.key.toUpperCase();
-                if (!key.includes('KEY') && !key.includes('SECRET') && !key.includes('PASSWORD') && !key.includes('PRIVATE') && !key.includes('CODE')) {
+                if (key.startsWith('PROMO_POPUP') || (!key.includes('KEY') && !key.includes('SECRET') && !key.includes('PASSWORD') && !key.includes('PRIVATE') && !key.includes('CODE'))) {
                     configMap[c.key] = c.value;
                 }
             });
