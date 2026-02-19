@@ -179,7 +179,7 @@ export const login = async (req: Request, res: Response) => {
 
         logger.info(`✅ [LOGIN] Success for: ${email}`);
 
-        const token = jwt.sign({ id: user.id, role: user.role, phoneNumber: user.phoneNumber }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ id: user.id, role: user.role, phoneNumber: user.phoneNumber }, JWT_SECRET, { expiresIn: '5m' });
 
         res.json({
             success: true,
@@ -286,7 +286,7 @@ export const googleLogin = async (req: Request, res: Response) => {
         const jwtToken = jwt.sign(
             { id: user.id, role: user.role, email: user.email },
             JWT_SECRET,
-            { expiresIn: '7d' }
+            { expiresIn: '5m' }
         );
 
         res.json({

@@ -63,30 +63,46 @@ export const getSessionById = async (req: Request, res: Response) => {
         const session = await ChatService.getSession(sessionId);
         if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
 
-        // Security Check: If session belongs to a user, verify the requestor is that user
-        if (session.userId) {
-            // Retrieve token from header manually since this route is public optional
-            const authHeader = req.headers['authorization'];
-            const token = authHeader && authHeader.split(' ')[1];
+        // --- AUTHENTICATION & AUTHORIZATION ---
+        let isAdmin = false;
+        let authUserId = null;
 
-            if (!token) {
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+
+        if (token && process.env.JWT_SECRET) {
+            try {
+                const decoded: any = jwt.verify(token, process.env.JWT_SECRET);
+                if (decoded) {
+                    isAdmin = decoded.role === 'ADMIN';
+                    authUserId = decoded.id;
+                }
+            } catch (e) {
+                // Invalid token, treat as guest/unauthenticated (or fail if verified user required)
+            }
+        }
+
+        // 1. Session belongs to a Registered User
+        if (session.userId) {
+            if (!token) { // User sessions require login
                 return res.status(403).json({ success: false, message: 'Unauthorized access to user session' });
             }
 
-            try {
-                if (!process.env.JWT_SECRET) throw new Error("No Secret");
-                const decoded: any = jwt.verify(token, process.env.JWT_SECRET);
-
-                if (decoded.id !== session.userId && decoded.role !== 'ADMIN') {
-                    return res.status(403).json({ success: false, message: 'Forbidden' });
-                }
-            } catch (e) {
-                return res.status(403).json({ success: false, message: 'Invalid Token' });
+            // Check ownership or admin
+            if (authUserId !== session.userId && !isAdmin) {
+                return res.status(403).json({ success: false, message: 'Forbidden' });
             }
-        } else {
-            // If it's a guest session, we optionally check for guestToken if provided
-            // To be more secure, we should ALWAYS require it, but for backward compatibility or public viewing...
-            // User requested "perbaiki" IDOR, so I will enforce it for endSession specifically.
+        }
+        // 2. Session is a Guest Session
+        else {
+            // Guest Session Security: Token required to prevent IDOR (unless Admin)
+            const isValidToken = (queryToken: any, sessionToken: string | null | undefined) => {
+                return sessionToken && queryToken === sessionToken;
+            };
+
+            if (!isAdmin && !isValidToken(guestToken, (session as any).sessionToken)) {
+                return res.status(403).json({ success: false, message: 'Access Denied: Invalid or Missing Session Token' });
+            }
         }
 
         res.json({ success: true, session });
