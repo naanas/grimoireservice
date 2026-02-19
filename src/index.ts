@@ -6,11 +6,22 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
+import * as Sentry from "@sentry/node";
+import { nodeProfilingIntegration } from "@sentry/profiling-node";
 
 dotenv.config();
 
+// Sentry Init
+Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    integrations: [
+        nodeProfilingIntegration(),
+    ],
+    tracesSampleRate: 1.0,
+});
+
 // FIX: Allow self-signed certificates for development/internal (fixes "UNABLE_TO_VERIFY_LEAF_SIGNATURE")
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+// process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // REMOVED FOR SECURITY
 
 import helmet from 'helmet';
 
@@ -206,6 +217,9 @@ app.use('/api/chat', chatRoutes);
 // Payment methods (public)
 import paymentRoutes from './routes/payment.route.js';
 app.use('/api/payment', paymentRoutes);
+
+// Sentry Error Handler (Must be before any other error middleware)
+Sentry.setupExpressErrorHandler(app);
 
 // Reviews (public + protected)
 import reviewRoutes from './routes/review.route.js';
