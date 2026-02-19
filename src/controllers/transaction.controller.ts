@@ -53,7 +53,8 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
 
         // 3. Validate Signature
         // Tripay manual: hash = hmac_sha256(json_body, private_key)
-        const signature = crypto.createHmac('sha256', privateKey).update(JSON.stringify(req.body)).digest('hex');
+        const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+        const signature = crypto.createHmac('sha256', privateKey).update(rawBody).digest('hex');
 
         // [SECURITY] Use Timing-Safe Comparison to prevent Timing Attacks
         const signatureBuffer = Buffer.from(signature);

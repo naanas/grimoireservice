@@ -58,7 +58,13 @@ app.use(cors({
 }));
 
 
-app.use(express.json());
+app.use(express.json({
+    verify: (req: any, res, buf) => {
+        if (req.url.includes('/api/callback/tripay')) {
+            req.rawBody = buf.toString();
+        }
+    }
+}));
 // Ipaymu Callback uses x-www-form-urlencoded
 app.use(express.urlencoded({ extended: true }));
 
