@@ -244,6 +244,13 @@ app.get('/api/health', (req, res) => {
 import configRoutes from './routes/config.route.js';
 app.use('/api/config', configRoutes);
 
+import uploadRoutes from './routes/upload.route.js';
+app.use('/api/upload', uploadRoutes);
+
+// Serve Static Files (Uploads)
+import path from 'path';
+app.use('/uploads', express.static(path.join(process.cwd(), 'public/uploads'))); // Serve /uploads directly
+
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();

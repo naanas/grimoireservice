@@ -61,3 +61,49 @@ export const getLeaderboard = async (req: Request, res: Response) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+export const createBanner = async (req: Request, res: Response) => {
+    try {
+        const { title, imageUrl, linkUrl } = req.body;
+        if (!imageUrl) return res.status(400).json({ success: false, message: 'Image URL is required' });
+
+        const banner = await prisma.banner.create({
+            data: {
+                title: title as string,
+                imageUrl: imageUrl as string,
+                linkUrl: linkUrl as string,
+                isActive: true
+            }
+        });
+        res.json({ success: true, data: banner });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// DELETE /api/content/banners/:id
+export const deleteBanner = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        await prisma.banner.delete({ where: { id: id as string } });
+        res.json({ success: true, message: 'Banner deleted' });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// PATCH /api/content/banners/:id/toggle
+export const toggleBannerActive = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const banner = await prisma.banner.findUnique({ where: { id: id as string } });
+        if (!banner) return res.status(404).json({ success: false, message: 'Banner not found' });
+
+        const updated = await prisma.banner.update({
+            where: { id: id as string },
+            data: { isActive: !banner.isActive }
+        });
+        res.json({ success: true, data: updated });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
