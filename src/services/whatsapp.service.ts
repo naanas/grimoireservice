@@ -13,25 +13,37 @@ export const sendMessage = async (target: string, message: string) => {
     // Basic validation
     if (!target || target.length < 5) return { success: false };
 
-    const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || '';
+    if (!FONNTE_TOKEN) {
+        console.warn(`⚠️  [WA Service] FONNTE_TOKEN is missing. Notification skipped for ${target}.`);
+        return { success: false, message: 'Fonnte Token missing' };
+    }
 
     try {
-        console.log(`📨 [WA Service] Forwarding request to Java Microservice (8081) for ${target}...`);
+        console.log(`📨 [WA Service] Sending message directly to Fonnte API for ${target}...`);
 
-        const response = await axios.post(NOTIFICATION_SERVICE_URL, {
+        const response = await axios.post('https://api.fonnte.com/send', {
             target: target,
-            message: message
+            message: message,
+            delay: '2', // Optional delay string like '2'
+            countryCode: '62' // Adjust as needed
         }, {
-            headers: { 'X-Internal-Token': process.env.INTERNAL_SERVICE_TOKEN || 'dev-token' },
-            timeout: 5000
+            headers: {
+                'Authorization': FONNTE_TOKEN,
+                'Content-Type': 'application/json'
+            },
+            timeout: 10000 // 10 second timeout for external API
         });
 
-        console.log(`✅ [WA Service] Success! Response from Java:`, response.data);
-        return { success: true, data: response.data };
+        if (response.data.status) {
+            console.log(`✅ [WA Service] Success! Fonnte accepted message for ${target}.`);
+            return { success: true, data: response.data };
+        } else {
+            console.warn(`⚠️ [WA Service] Fonnte declined:`, response.data.reason);
+            return { success: false, message: response.data.reason };
+        }
 
     } catch (error: any) {
-        console.error(`❌ [WA Service] Failed to connect to Java Service: ${error.message}`);
-        console.warn(`⚠️  Make sure 'notification-service' is running on port 8081!`);
+        console.error(`❌ [WA Service] Failed to connect to Fonnte API: ${error.message}`);
         return { success: false, message: error.message };
     }
 };

@@ -1,9 +1,8 @@
-import axios from 'axios';
 import dotenv from 'dotenv';
 import { logger } from '../lib/logger.js';
+import * as tripay from './tripay.service.js';
+import * as ipaymu from './ipaymu.service.js';
 dotenv.config();
-
-const PAYMENT_SERVICE_URL = process.env.PAYMENT_SERVICE_URL || 'http://localhost:8081';
 
 export const createPayment = async (
     trxId: string,
@@ -23,32 +22,41 @@ export const createPayment = async (
     adminFee?: number
 ) => {
     try {
-        logger.info(`[PAYMENT-SERVICE] Creating ${method} transaction for ${trxId}`);
-        const payload: any = {
-            transactionId: trxId,
-            amount: amount,
-            method: method,
-            channel: channel,
-            buyerName: buyerName,
-            buyerEmail: buyerEmail,
-            buyerPhone: buyerPhone,
-            productName: productName,
-            // Pass Credentials if present
-            tripayApiKey,
-            tripayPrivateKey,
-            tripayMerchantCode,
-            tripayMode,
-            basePrice,
-            adminFee
-        };
+        logger.info(`[PAYMENT-SERVICE] Native routing ${method} transaction for ${trxId}`);
 
-        const response = await axios.post(`${PAYMENT_SERVICE_URL}/api/payment/create`, payload, {
-            headers: { 'X-Internal-Token': process.env.INTERNAL_SERVICE_TOKEN || 'dev-token' }
-        });
+        if (method === 'TRIPAY') {
+            const result = await tripay.initPayment(
+                trxId, amount, buyerName, buyerEmail, buyerPhone, productName, channel,
+                basePrice, adminFee, tripayMode, tripayApiKey, tripayPrivateKey, tripayMerchantCode
+            );
 
-        return response.data;
+            if (!result.success) throw new Error(result.message);
+            return result;
+
+        } else if (method === 'IPAYMU') {
+            const result = await ipaymu.initPayment(
+                trxId, amount, buyerName, buyerEmail, channel // Ipaymu expects channel as method parameter inside init payment logic mapping
+            );
+
+            if (!result.success) throw new Error(result.message);
+
+            // Map Ipaymu return to standard Tripay-like format for transaction controller
+            return {
+                success: true,
+                message: "Success",
+                paymentUrl: result.data?.Url,
+                paymentNo: null,
+                paymentName: 'Ipaymu URL',
+                paymentTrxId: result.data?.TransactionId || `${result.data?.SessionId}`,
+                expiredTime: null
+            };
+
+        } else {
+            throw new Error(`Unsupported Gateway Method: ${method}`);
+        }
+
     } catch (error: any) {
-        logger.error(`[PAYMENT-SERVICE] Error: ${JSON.stringify(error.response?.data || error.message)}`);
-        throw new Error(error.response?.data?.message || 'Payment Service Error');
+        logger.error(`[PAYMENT-SERVICE] Error: ${error.message}`);
+        throw new Error(error.message || 'Payment Service Core Error');
     }
 };
