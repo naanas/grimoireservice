@@ -280,50 +280,7 @@ const startServer = async () => {
     // 3. Start Keep-Alive System (Wake Java Service)
     // Legacy Payment Check removed as we now use Java Payment Service
 
-    // 3. Start Keep-Alive System (Wake Java Service)
-    const JAVA_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL;
-    if (JAVA_SERVICE_URL) {
-        console.log(`⏰ [KEEP-ALIVE] Auto-Wake system active for: ${JAVA_SERVICE_URL}`);
-
-        // Run every 10 minutes (600,000 ms)
-        setInterval(async () => {
-            try {
-                // Extract Base URL (assuming service URL might have path)
-                // If URL is "https://app.render.com/api/send", we want "https://app.render.com/" usually, 
-                // but pining the endpoint endpoint with GET (even if it expects POST) is usually enough to wake it (404/405 is fine).
-                // Safest is to just hit the URL provided.
-                logger.info(`[KEEP-ALIVE] Pinging Java Service...`);
-                await axios.get(JAVA_SERVICE_URL, { timeout: 5000 }).catch(e => {
-                    // Ignore errors, we just want to wake it up. 
-                    // 404/405/400 are Good signs (it's alive).
-                    // Network Error/Timeout means it might be down or waking up.
-                    if (e.response) logger.info(`[KEEP-ALIVE] Java Service is Awake (Status: ${e.response.status})`);
-                    else logger.info(`[KEEP-ALIVE] Ping sent (No response/waking up)`);
-                });
-            } catch (e) {
-                // silent
-            }
-        }, 100000);
-    }
-
-    // --- KEEP ALIVE MECHANISM (PAYMENT SERVICE) ---
-    // Ping Java Payment Service every 14 minutes to prevent Render sleep
-    const PAYMENT_SERVICE_URL = process.env.PAYMENT_SERVICE_URL || 'http://localhost:8080';
-
-    if (PAYMENT_SERVICE_URL) {
-        setInterval(async () => {
-            try {
-                // Ensure we hit the /ping endpoint
-                const targetUrl = PAYMENT_SERVICE_URL.endsWith('/') ? `${PAYMENT_SERVICE_URL}ping` : `${PAYMENT_SERVICE_URL}/ping`;
-
-                logger.info(`⏰ [KEEP-ALIVE] Pinging Payment Service at ${targetUrl}...`);
-                await axios.get(targetUrl);
-                logger.info('✅ [KEEP-ALIVE] Payment Service is awake.');
-            } catch (error: any) {
-                logger.warn(`⚠️ [KEEP-ALIVE] Failed to ping Payment Service: ${error.message}`);
-            }
-        }, 60 * 1000); // 1 Minute
-    }
+    // 3. Keep-Alive System (Removed - Not needed on Railway)
 
 
     // Use httpServer instead of app.listen
