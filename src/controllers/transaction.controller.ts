@@ -31,27 +31,37 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
             return res.status(404).json({ success: false, message: 'Transaction not found' });
         }
 
-        // 2. Fetch Tripay Configs from DB
+        // 2. Idempotency Check (Early Exit)
+        if (trx.status === 'SUCCESS' || trx.status === 'PROCESSING') {
+            console.log(`✅ [TRIPAY-CALLBACK] Idempotency: Transaction ${merchant_ref} already processed (Status: ${trx.status})`);
+            return res.json({ success: true, message: 'Already Processed' });
+        }
+
+        // 3. Fetch Tripay Configs from DB
         const configs = await prisma.systemConfig.findMany({
             where: {
-                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_PROD_PRIVATE_KEY'] }
+                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] }
             }
         });
         const configMap: any = {};
         configs.forEach(c => configMap[c.key] = c.value);
 
         const mode = configMap['TRIPAY_MODE'] || process.env.TRIPAY_MODE || 'SANDBOX';
+
         const privateKey = mode === 'PRODUCTION'
             ? (configMap['TRIPAY_PROD_PRIVATE_KEY'] || process.env.TRIPAY_PROD_PRIVATE_KEY)
             : (configMap['TRIPAY_SB_PRIVATE_KEY'] || process.env.TRIPAY_SB_PRIVATE_KEY);
 
-        if (!privateKey) {
-            const missingKey = mode === 'PRODUCTION' ? 'TRIPAY_PROD_PRIVATE_KEY' : 'TRIPAY_SB_PRIVATE_KEY';
-            console.error(`❌ [TRIPAY-CALLBACK] Missing Private Key for ${mode} mode. Please set ${missingKey} in .env or System Config.`);
-            return res.status(500).json({ success: false, message: `Configuration Error: Missing ${missingKey}` });
+        const apiKey = mode === 'PRODUCTION'
+            ? (configMap['TRIPAY_PROD_API_KEY'] || process.env.TRIPAY_PROD_API_KEY)
+            : (configMap['TRIPAY_SB_API_KEY'] || process.env.TRIPAY_SB_API_KEY);
+
+        if (!privateKey || !apiKey) {
+            console.error(`❌ [TRIPAY-CALLBACK] Missing Config (Private Key or API Key) for ${mode} mode.`);
+            return res.status(500).json({ success: false, message: `Configuration Error` });
         }
 
-        // 3. Validate Signature
+        // 4. Validate Signature
         // Tripay manual: hash = hmac_sha256(json_body, private_key)
         const rawBody = (req as any).rawBody || JSON.stringify(req.body);
         const signature = crypto.createHmac('sha256', privateKey).update(rawBody).digest('hex');
@@ -65,8 +75,30 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
             return res.status(400).json({ success: false, message: 'Invalid Signature' });
         }
 
-        // 4. Map Status
-        let newStatus = trx.status;
+        // 5. Active Verification (Query Tripay Server)
+        // Check Status API confirms the invoice state safely.
+        if (status === 'PAID') {
+            try {
+                const baseUrl = mode === 'PRODUCTION' ? 'https://tripay.co.id/api' : 'https://tripay.co.id/api-sandbox';
+                const verifyRes = await axios.get(`${baseUrl}/transaction/check-status`, {
+                    params: { reference: reference },
+                    headers: { 'Authorization': `Bearer ${apiKey}` },
+                    validateStatus: (s) => s < 999
+                });
+
+                if (!verifyRes.data?.success || verifyRes.data?.data?.status !== 'PAID') {
+                    console.error(`❌ [TRIPAY-CALLBACK] Active Verification Failed. Payload spoofing? Ref: ${reference}`);
+                    return res.status(400).json({ success: false, message: 'Verification Check Failed' });
+                }
+                console.log(`✅ [TRIPAY-CALLBACK] Active Verification Passed for Ref: ${reference}`);
+            } catch (vErr: any) {
+                console.error(`❌ [TRIPAY-CALLBACK] Axios verification error:`, vErr.message);
+                return res.status(500).json({ success: false, message: 'Could not reach Tripay backend' });
+            }
+        }
+
+        // 6. Map Status
+        let newStatus: string = trx.status;
         if (status === 'PAID') {
             if (trx.type === 'DEPOSIT') {
                 newStatus = 'SUCCESS';
