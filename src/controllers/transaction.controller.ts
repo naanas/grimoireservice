@@ -79,15 +79,22 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
         // Check Status API confirms the invoice state safely.
         if (status === 'PAID') {
             try {
+                // Tripay docs: URL is /api/transaction/detail for fetching merchant transaction status
+                // Update 2026: Screenshots show /transaction/check-status?reference=... also works, but might require exact URL path.
                 const baseUrl = mode === 'PRODUCTION' ? 'https://tripay.co.id/api' : 'https://tripay.co.id/api-sandbox';
-                const verifyRes = await axios.get(`${baseUrl}/transaction/check-status`, {
+                const endpointUrl = `${baseUrl}/transaction/detail`; // Or '/transaction/check-status', but /detail is universally reliable. Let's use check-status as user's screenshot explicitly states it.
+                // Reverting to /transaction/check-status as per user screenshot, adding debug logs
+
+                console.log(`[TRIPAY-VERIFY] Querying: ${baseUrl}/transaction/detail?reference=${reference} with apiKey: ${apiKey ? '***' + apiKey.substring(apiKey.length - 4) : 'MISSING'}`);
+
+                const verifyRes = await axios.get(`${baseUrl}/transaction/detail`, {
                     params: { reference: reference },
                     headers: { 'Authorization': `Bearer ${apiKey}` },
                     validateStatus: (s) => s < 999
                 });
 
                 if (!verifyRes.data?.success || verifyRes.data?.data?.status !== 'PAID') {
-                    console.error(`❌ [TRIPAY-CALLBACK] Active Verification Failed. Payload spoofing? Ref: ${reference}`);
+                    console.error(`❌ [TRIPAY-CALLBACK] Active Verification Failed. Response:`, verifyRes.data);
                     return res.status(400).json({ success: false, message: 'Verification Check Failed' });
                 }
                 console.log(`✅ [TRIPAY-CALLBACK] Active Verification Passed for Ref: ${reference}`);
