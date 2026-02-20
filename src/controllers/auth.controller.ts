@@ -156,9 +156,32 @@ export const verifyEmail = async (req: Request, res: Response) => {
 // POST /api/auth/login
 export const login = async (req: Request, res: Response) => {
     try {
-        const { email, password } = req.body;
+        const { email, password, recaptchaToken } = req.body;
 
         if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required" });
+        if (!recaptchaToken) return res.status(400).json({ success: false, message: "reCAPTCHA token missing. Please verify you are not a robot." });
+
+        // Verify reCAPTCHA token with Google
+        const recaptchaSecret = process.env.RECAPTCHA_SECRET_KEY;
+        if (recaptchaSecret) {
+            try {
+                const recaptchaRes = await fetch(`https://www.google.com/recaptcha/api/siteverify?secret=${recaptchaSecret}&response=${recaptchaToken}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                });
+                const recaptchaData = await recaptchaRes.json();
+
+                if (!recaptchaData.success) {
+                    logger.warn(`🤖 [LOGIN] reCAPTCHA failed for ${email}`);
+                    return res.status(400).json({ success: false, message: "reCAPTCHA verification failed. Please try again." });
+                }
+            } catch (err) {
+                logger.error(`reCAPTCHA Verification Error: ${err}`);
+                return res.status(500).json({ success: false, message: "Unable to verify reCAPTCHA." });
+            }
+        } else {
+            logger.warn("⚠️ RECAPTCHA_SECRET_KEY is not configured in .env. Skipping reCAPTCHA verification.");
+        }
 
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user || !user.password) {
