@@ -225,7 +225,7 @@ import paymentRoutes from './routes/payment.route.js';
 app.use('/api/payment', paymentRoutes);
 
 // Sentry Error Handler (Must be before any other error middleware)
-Sentry.setupExpressErrorHandler(app);
+// MOVED TO END
 
 // Reviews (public + protected)
 import reviewRoutes from './routes/review.route.js';
@@ -250,6 +250,9 @@ app.use('/api/upload', uploadRoutes);
 // Serve Static Files (Uploads)
 import path from 'path';
 app.use('/uploads', express.static(path.join(process.cwd(), 'public/uploads'))); // Serve /uploads directly
+
+// Sentry Error Handler (Must be before any other error middleware)
+Sentry.setupExpressErrorHandler(app);
 
 import { PrismaClient } from '@prisma/client';
 

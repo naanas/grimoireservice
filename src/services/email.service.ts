@@ -3,10 +3,16 @@ import { logger } from '../lib/logger.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resendApiKey = process.env.RESEND_API_KEY || '';
+const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
 export const sendVerificationEmail = async (to: string, token: string, name: string) => {
     try {
+        if (!resend) {
+            logger.error('❌ [EMAIL] Cannot send email: RESEND_API_KEY is missing');
+            return false;
+        }
+
         const verificationUrl = `${process.env.BACKEND_URL || 'http://localhost:4000'}/api/auth/verify-email?token=${token}`;
 
         logger.info(`📧 [EMAIL] Sending verification email to ${to} via Resend`);
