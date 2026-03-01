@@ -44,7 +44,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error("Admin Stats Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -98,7 +98,7 @@ export const getAllTransactions = async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error("Admin Transactions Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -120,7 +120,7 @@ export const updateProductPrice = async (req: Request, res: Response) => {
         res.json({ success: true, message: "Product updated", data: product });
     } catch (error: any) {
         console.error("Update Product Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -169,7 +169,7 @@ export const getAllProducts = async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error("Admin Products Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // POST /api/admin/products/sync
@@ -462,7 +462,7 @@ export const syncProducts = async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error('❌ Sync Error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -528,7 +528,7 @@ export const getAllCategories = async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error("Get Categories Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -572,7 +572,7 @@ export const updateCategory = async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error("Update Category Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 import axios from 'axios';
@@ -799,7 +799,7 @@ export const retryTransaction = async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error("Safe Retry Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -850,7 +850,7 @@ export const getPaymentMethods = async (req: Request, res: Response) => {
         res.json({ success: true, data: methods });
     } catch (error: any) {
         console.error("Get Payment Methods Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -888,7 +888,7 @@ export const togglePaymentMethod = async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error("Toggle Payment Method Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -925,7 +925,7 @@ export const getAllReviews = async (req: Request, res: Response) => {
         res.json({ success: true, data: reviews });
     } catch (error: any) {
         console.error("Get All Reviews Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -952,7 +952,7 @@ export const approveReview = async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error("Approve Review Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -973,6 +973,6 @@ export const deleteReview = async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error("Delete Review Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };

@@ -40,7 +40,8 @@ export const upload = multer({
 export const uploadFile = (req: Request, res: Response) => {
     upload(req, res, (err: any) => {
         if (err) {
-            return res.status(400).json({ success: false, message: err.message });
+            console.error('[uploadFile] Error:', err);
+            return res.status(400).json({ success: false, message: 'File upload failed. Only images/videos are allowed (max 50MB).' });
         }
         if (!(req as any).file) {
             return res.status(400).json({ success: false, message: 'No file uploaded' });

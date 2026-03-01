@@ -15,7 +15,7 @@ export const getActiveBanners = async (req: Request, res: Response) => {
         res.json({ success: true, data: banners });
     } catch (error: any) {
         console.error("❌ Fetch Banners Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -57,8 +57,8 @@ export const getLeaderboard = async (req: Request, res: Response) => {
 
         res.json({ success: true, data: enrichedBoard.filter(Boolean) });
     } catch (error: any) {
-        console.error("Leaderboard Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Leaderboard Error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 export const createBanner = async (req: Request, res: Response) => {
@@ -76,7 +76,8 @@ export const createBanner = async (req: Request, res: Response) => {
         });
         res.json({ success: true, data: banner });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('[createBanner] Error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -87,7 +88,8 @@ export const deleteBanner = async (req: Request, res: Response) => {
         await prisma.banner.delete({ where: { id: id as string } });
         res.json({ success: true, message: 'Banner deleted' });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('[deleteBanner] Error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -104,6 +106,7 @@ export const toggleBannerActive = async (req: Request, res: Response) => {
         });
         res.json({ success: true, data: updated });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('[toggleBannerActive] Error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };

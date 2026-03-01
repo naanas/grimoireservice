@@ -178,7 +178,7 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
         res.json({ success: true });
     } catch (error: any) {
         console.error("❌ [TRIPAY-CALLBACK] Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -296,12 +296,12 @@ export const processGameTopup = async (trxId: string) => {
             await prisma.transaction.update({
                 where: { id: trxId },
                 data: {
-                    providerStatus: 'FAILED_SYS: ' + error.message,
+                    providerStatus: 'FAILED_SYS',
                     status: 'FAILED' // Or keep PROCESSING? Safe to fail.
                 }
             });
         } catch (e) { }
-        return { success: false, message: error.message };
+        return { success: false, message: 'Processing error. Please contact support.' };
     }
 };
 
@@ -364,7 +364,7 @@ export const getCategoryBySlug = async (req: Request, res: Response) => {
 
         res.json({ success: true, data: { ...category, variations } });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -405,7 +405,7 @@ export const getBestSellingCategories = async (req: Request, res: Response) => {
         res.json({ success: true, data: formatted });
     } catch (error: any) {
         console.error("Best Selling Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -440,7 +440,7 @@ export const getPopularCategories = async (req: Request, res: Response) => {
         res.json({ success: true, data: formatted });
     } catch (error: any) {
         console.error("Popular Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -551,7 +551,7 @@ export const getVendorProducts = async (req: Request, res: Response) => {
             res.status(500).json({ success: false, message: result.message });
         }
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -1007,7 +1007,7 @@ export const createTransaction = async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error(error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -1175,7 +1175,7 @@ export const createDeposit = async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error(error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -1554,7 +1554,7 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error("Check Status Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -1612,7 +1612,7 @@ export const getTransaction = async (req: Request, res: Response) => {
 
         res.json({ success: true, data: safeData });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 

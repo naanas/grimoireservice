@@ -46,6 +46,6 @@ export const getActivePaymentMethods = async (req: Request, res: Response) => {
         res.json({ success: true, data: activeMethods });
     } catch (error: any) {
         console.error("Get Active Payment Methods Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };

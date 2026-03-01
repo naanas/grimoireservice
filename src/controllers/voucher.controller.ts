@@ -58,6 +58,6 @@ export const checkVoucher = async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error("Check Voucher Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };

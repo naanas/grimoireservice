@@ -24,7 +24,8 @@ export const getConfig = async (req: Request, res: Response) => {
 
         res.json({ success: true, data: configMap });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('[getConfig] Error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -42,7 +43,8 @@ export const getAllConfig = async (req: Request, res: Response) => {
 
         res.json({ success: true, data: configMap });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('[getAllConfig] Error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -69,11 +71,13 @@ export const updateConfig = async (req: Request, res: Response) => {
             create: { key, value }
         });
 
-        console.log(`[CONFIG] Updated ${key} to ${value}`);
+        const SENSITIVE_KEYS = ['KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'PRIVATE'];
+        const isSensitive = SENSITIVE_KEYS.some(k => key.toUpperCase().includes(k));
+        console.log(`[CONFIG] Updated ${key} to ${isSensitive ? '[REDACTED]' : value}`);
 
         res.json({ success: true, data: config });
     } catch (error: any) {
-        console.error("Update Config Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        console.error('[updateConfig] Error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };

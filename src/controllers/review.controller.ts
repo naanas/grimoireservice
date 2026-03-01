@@ -77,7 +77,7 @@ export const createReview = async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error('Create Review Error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -127,7 +127,7 @@ export const getReviews = async (req: Request, res: Response) => {
         res.json({ success: true, data: reviews });
     } catch (error: any) {
         console.error('Get Reviews Error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -199,7 +199,7 @@ export const getReviewStats = async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error('Get Review Stats Error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 
@@ -229,6 +229,6 @@ export const getMyReview = async (req: Request, res: Response) => {
         res.json({ success: true, data: review });
     } catch (error: any) {
         console.error('Get My Review Error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
