@@ -53,11 +53,8 @@ export const initPayment = async (
     // Reconstruct Return URL logic from Java
     const returnUrl = `${frontendUrl}/history?id=${trxId}`;
 
-    // Accurate logic for items (handling fees)
+    // Accurate logic for items (product price comes from basePrice or fallback to amount)
     let productPrice = basePrice ? Math.floor(basePrice) : Math.floor(amount);
-    if (!basePrice && adminFee && adminFee > 0) {
-        productPrice -= Math.floor(adminFee);
-    }
 
     const items: any[] = [{
         sku: 'TOPUP',
@@ -66,15 +63,9 @@ export const initPayment = async (
         quantity: 1
     }];
 
-    if (adminFee && adminFee > 0) {
-        items.push({
-            sku: 'FEE',
-            name: 'Admin Fee',
-            price: Math.floor(adminFee),
-            quantity: 1
-        });
-        amount = productPrice + Math.floor(adminFee); // Sync total amount exactly
-    }
+    // Gateway (QRIS/VA) automatically applies its own system fees.
+    // We send only the NET product price so the user isn't double-charged.
+    amount = productPrice;
 
     const payloadObj = {
         method: paymentChannel, // e.g., 'QRISC', 'BCAVA'
