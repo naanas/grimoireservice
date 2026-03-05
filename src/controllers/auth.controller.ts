@@ -309,7 +309,7 @@ export const googleLogin = async (req: Request, res: Response) => {
         const jwtToken = jwt.sign(
             { id: user.id, role: user.role, email: user.email },
             JWT_SECRET,
-            { expiresIn: '5m' }
+            { expiresIn: '10m' }
         );
 
         res.json({

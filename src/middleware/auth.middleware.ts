@@ -21,7 +21,7 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
         req.user = verified;
         next();
     } catch (error) {
-        res.status(403).json({ success: false, message: 'Invalid Token' });
+        res.status(401).json({ success: false, message: 'Invalid or expired token' });
     }
 };
 
