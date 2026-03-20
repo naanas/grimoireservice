@@ -1504,6 +1504,16 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
         // B. Check Provider Status (VIP)
         console.log(`🔍 [CHECK-STATUS] ID: ${id} | Status: ${trx.status} | ProviderID: ${trx.providerTrxId}`);
 
+        // DEPOSIT transactions don't go through game provider — return data directly
+        const isDepositTrx = (trx as any).type === 'DEPOSIT' || trx.invoice?.startsWith('DEP-');
+        if (isDepositTrx) {
+            const safeDepositData = {
+                ...trx,
+                guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+            };
+            return res.json({ success: true, message: `Deposit Status: ${trx.status}`, data: safeDepositData });
+        }
+
         if (trx.status === 'PROCESSING' || trx.status === 'SUCCESS') {
             if (!trx.providerTrxId) {
                 // ... existing retry logic ...
