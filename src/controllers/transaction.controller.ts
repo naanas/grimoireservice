@@ -860,10 +860,14 @@ export const createTransaction = async (req: Request, res: Response) => {
                     res.json({
                         success: true,
                         data: {
+                            id: trx.id,         // ← CRITICAL: FE needs this for URL & polling
                             invoice,
                             status: 'PROCESSING',
                             productName: product.name,
-                            amount: finalAmount
+                            amount: finalAmount,
+                            adminFee: 0,
+                            discountAmount,
+                            paymentName: 'Balance'
                         }
                     });
 
