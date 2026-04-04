@@ -7,6 +7,37 @@ import * as whatsappService from '../services/whatsapp.service.js';
 import * as crypto from 'crypto'; // Added for VIP callback signature validation
 import axios from 'axios';
 
+// --- CONFIG CACHE (reduces DB queries from every request to max once per 5 minutes) ---
+let _configCache: Record<string, string> | null = null;
+let _configCacheExpiry = 0;
+const CONFIG_TTL = 5 * 60 * 1000; // 5 minutes
+
+const getPaymentConfigs = async (keys: string[]): Promise<Record<string, string>> => {
+    const now = Date.now();
+    if (_configCache && now < _configCacheExpiry) {
+        return _configCache;
+    }
+    const configs = await (prisma as any).systemConfig.findMany({
+        where: { key: { in: keys } }
+    });
+    const map: Record<string, string> = {};
+    configs.forEach((c: any) => map[c.key] = c.value);
+    _configCache = map;
+    _configCacheExpiry = now + CONFIG_TTL;
+    return map;
+};
+
+// Call this to invalidate config cache (e.g. after admin updates settings)
+export const invalidateConfigCache = () => {
+    _configCache = null;
+    _configCacheExpiry = 0;
+};
+
+// --- POPULAR CATEGORIES CACHE ---
+let _popularCategoriesCache: any[] | null = null;
+let _popularCacheExpiry = 0;
+const POPULAR_TTL = 10 * 60 * 1000; // 10 minutes
+
 // --- HELPER FUNCTIONS ---
 
 export const handleTripayCallback = async (req: Request, res: Response) => {
@@ -412,6 +443,12 @@ export const getBestSellingCategories = async (req: Request, res: Response) => {
 // GET /api/categories/popular
 export const getPopularCategories = async (req: Request, res: Response) => {
     try {
+        // Use cache to avoid costly ORDER BY RANDOM() full table scan on every request
+        const now = Date.now();
+        if (_popularCategoriesCache && now < _popularCacheExpiry) {
+            return res.json({ success: true, data: _popularCategoriesCache });
+        }
+
         const result: any[] = await prisma.$queryRaw`
                 SELECT 
                     MIN(c.id) as id, 
@@ -422,11 +459,9 @@ export const getPopularCategories = async (req: Request, res: Response) => {
                 FROM categories c
                 WHERE c."isActive" = true
                 GROUP BY COALESCE(c."brand", c.name)
-                ORDER BY RANDOM()
-                LIMIT 10
+                LIMIT 30
             `;
 
-        // Fallback (Not needed if we query Categories directly, but keeping structure)
         if (result.length === 0) {
             return res.json({ success: true, data: [] });
         }
@@ -437,7 +472,19 @@ export const getPopularCategories = async (req: Request, res: Response) => {
             total_sales: Number(item.trend_score) // Keep compatibility if frontend expects total_sales
         }));
 
-        res.json({ success: true, data: formatted });
+        // Shuffle in-memory (Fisher-Yates) instead of ORDER BY RANDOM() in DB
+        for (let i = formatted.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [formatted[i], formatted[j]] = [formatted[j], formatted[i]];
+        }
+
+        const top10 = formatted.slice(0, 10);
+
+        // Store in cache
+        _popularCategoriesCache = top10;
+        _popularCacheExpiry = now + POPULAR_TTL;
+
+        res.json({ success: true, data: top10 });
     } catch (error: any) {
         console.error("Popular Error:", error);
         res.status(500).json({ success: false, message: 'Internal server error' });
@@ -813,10 +860,14 @@ export const createTransaction = async (req: Request, res: Response) => {
                     res.json({
                         success: true,
                         data: {
+                            id: trx.id,         // ← CRITICAL: FE needs this for URL & polling
                             invoice,
                             status: 'PROCESSING',
                             productName: product.name,
-                            amount: finalAmount
+                            amount: finalAmount,
+                            adminFee: 0,
+                            discountAmount,
+                            paymentName: 'Balance'
                         }
                     });
 
@@ -1452,6 +1503,16 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
         // Only if status is PROCESSING or SUCCESS
         // B. Check Provider Status (VIP)
         console.log(`🔍 [CHECK-STATUS] ID: ${id} | Status: ${trx.status} | ProviderID: ${trx.providerTrxId}`);
+
+        // DEPOSIT transactions don't go through game provider — return data directly
+        const isDepositTrx = (trx as any).type === 'DEPOSIT' || trx.invoice?.startsWith('DEP-');
+        if (isDepositTrx) {
+            const safeDepositData = {
+                ...trx,
+                guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+            };
+            return res.json({ success: true, message: `Deposit Status: ${trx.status}`, data: safeDepositData });
+        }
 
         if (trx.status === 'PROCESSING' || trx.status === 'SUCCESS') {
             if (!trx.providerTrxId) {

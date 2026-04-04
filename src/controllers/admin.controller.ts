@@ -128,7 +128,7 @@ export const updateProductPrice = async (req: Request, res: Response) => {
 export const getAllProducts = async (req: Request, res: Response) => {
     try {
         const page = Number(req.query.page) || 1;
-        const limit = Number(req.query.limit) || 50; // More items for products
+        const limit = Number(req.query.limit) || 50;
         const skip = (page - 1) * limit;
         const search = req.query.search as string;
         const categoryId = req.query.categoryId as string;
