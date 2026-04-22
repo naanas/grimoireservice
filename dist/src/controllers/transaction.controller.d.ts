@@ -1,4 +1,6 @@
 import type { Request, Response } from 'express';
+export declare const invalidateConfigCache: () => void;
+export declare const handleTripayCallback: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 /**
  * Process Game Topup (Trigger Provider)
  * Use this to fulfill the order after payment is confirmed (Balance or Gateway).
@@ -15,6 +17,7 @@ export declare const getCategoryBySlug: (req: Request, res: Response) => Promise
 export declare const getBestSellingCategories: (req: Request, res: Response) => Promise<void>;
 export declare const getPopularCategories: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const getProducts: (req: Request, res: Response) => Promise<void>;
+export declare const calculateFee: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const getVendorProducts: (req: Request, res: Response) => Promise<void>;
 export declare const checkGameId: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const createTransaction: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;

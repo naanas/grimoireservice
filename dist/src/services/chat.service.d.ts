@@ -6,8 +6,8 @@ export declare const ChatService: {
         guestEmail?: string;
     }): Promise<{
         user: {
-            name: string | null;
             email: string;
+            name: string | null;
             role: import(".prisma/client").$Enums.Role;
         } | null;
         messages: {
@@ -20,17 +20,18 @@ export declare const ChatService: {
         }[];
     } & {
         id: string;
-        isActive: boolean;
         createdAt: Date;
         updatedAt: Date;
+        isActive: boolean;
         userId: string | null;
         guestName: string | null;
         guestEmail: string | null;
+        sessionToken: string | null;
     }>;
     findActiveSessionByUser(userId: string): Promise<({
         user: {
-            name: string | null;
             email: string;
+            name: string | null;
             role: import(".prisma/client").$Enums.Role;
         } | null;
         messages: {
@@ -43,12 +44,13 @@ export declare const ChatService: {
         }[];
     } & {
         id: string;
-        isActive: boolean;
         createdAt: Date;
         updatedAt: Date;
+        isActive: boolean;
         userId: string | null;
         guestName: string | null;
         guestEmail: string | null;
+        sessionToken: string | null;
     }) | null>;
     findActiveSessionByGuest(email: string): Promise<({
         messages: {
@@ -61,17 +63,18 @@ export declare const ChatService: {
         }[];
     } & {
         id: string;
-        isActive: boolean;
         createdAt: Date;
         updatedAt: Date;
+        isActive: boolean;
         userId: string | null;
         guestName: string | null;
         guestEmail: string | null;
+        sessionToken: string | null;
     }) | null>;
     getSession(sessionId: string): Promise<({
         user: {
-            name: string | null;
             email: string;
+            name: string | null;
             role: import(".prisma/client").$Enums.Role;
         } | null;
         messages: {
@@ -84,12 +87,13 @@ export declare const ChatService: {
         }[];
     } & {
         id: string;
-        isActive: boolean;
         createdAt: Date;
         updatedAt: Date;
+        isActive: boolean;
         userId: string | null;
         guestName: string | null;
         guestEmail: string | null;
+        sessionToken: string | null;
     }) | null>;
     addMessage(sessionId: string, sender: Role, content: string): Promise<{
         id: string;
@@ -101,17 +105,18 @@ export declare const ChatService: {
     }>;
     closeSession(sessionId: string): Promise<{
         id: string;
-        isActive: boolean;
         createdAt: Date;
         updatedAt: Date;
+        isActive: boolean;
         userId: string | null;
         guestName: string | null;
         guestEmail: string | null;
+        sessionToken: string | null;
     }>;
     getActiveSessions(): Promise<({
         user: {
-            name: string | null;
             email: string;
+            name: string | null;
         } | null;
         messages: {
             id: string;
@@ -123,12 +128,13 @@ export declare const ChatService: {
         }[];
     } & {
         id: string;
-        isActive: boolean;
         createdAt: Date;
         updatedAt: Date;
+        isActive: boolean;
         userId: string | null;
         guestName: string | null;
         guestEmail: string | null;
+        sessionToken: string | null;
     })[]>;
     markMessagesAsRead(sessionId: string, role: Role): Promise<import(".prisma/client").Prisma.BatchPayload>;
 };
