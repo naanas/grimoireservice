@@ -21,21 +21,36 @@ const PAYMENT_CHANNELS_FALLBACK = [
     { code: 'linkaja', name: 'LinkAja', method: 'ewallet', group: 'E-Wallet' },
 ];
 
+type FrontendChannel = {
+    code: string;
+    name: string;
+    method: string;
+    group: string;
+    logo?: string;
+    flatFee?: number;
+    percentFee?: number;
+    minAmount?: number;
+    maxAmount?: number;
+};
+
 // Mapping DupayChannel -> bentuk yang dipakai grimoire frontend (PaymentChannel).
-// Field dengan nilai 0/kosong diset ke undefined supaya optional chaining di UI
-// ga render "Rp 0" untuk channel tanpa fee (mis. QRIS zero-fee).
-const orUndef = (n?: number) => (n && n > 0 ? n : undefined);
-const toFrontendShape = (ch: DupayChannel) => ({
-    code: ch.code,
-    name: ch.label || ch.code.toUpperCase(),
-    method: ch.method || 'va',
-    group: ch.group || 'Virtual Account',
-    logo: ch.logo || `/payment/${ch.code}.png`,
-    flatFee: orUndef(ch.fee_flat),
-    percentFee: orUndef(ch.fee_percent),
-    minAmount: orUndef(ch.min_amount),
-    maxAmount: orUndef(ch.max_amount),
-});
+// Field dengan nilai 0/kosong DIHILANGKAN dari object (bukan di-set undefined)
+// supaya kompatibel dengan tsconfig `exactOptionalPropertyTypes: true` dan
+// optional chaining di UI ga render "Rp 0" untuk channel tanpa fee (mis. QRIS).
+const toFrontendShape = (ch: DupayChannel): FrontendChannel => {
+    const out: FrontendChannel = {
+        code: ch.code,
+        name: ch.label || ch.code.toUpperCase(),
+        method: ch.method || 'va',
+        group: ch.group || 'Virtual Account',
+        logo: ch.logo || `/payment/${ch.code}.png`,
+    };
+    if (ch.fee_flat && ch.fee_flat > 0) out.flatFee = ch.fee_flat;
+    if (ch.fee_percent && ch.fee_percent > 0) out.percentFee = ch.fee_percent;
+    if (ch.min_amount && ch.min_amount > 0) out.minAmount = ch.min_amount;
+    if (ch.max_amount && ch.max_amount > 0) out.maxAmount = ch.max_amount;
+    return out;
+};
 
 // GET /api/payment/methods - Get ACTIVE payment methods (Public)
 //
@@ -60,7 +75,7 @@ export const getActivePaymentMethods = async (_req: Request, res: Response) => {
             statusMap[code] = c.value === 'active';
         });
 
-        let source: Array<{ code: string; name: string; method: string; group: string; logo?: string; flatFee?: number; percentFee?: number; minAmount?: number; maxAmount?: number }>;
+        let source: FrontendChannel[];
 
         if (dupayChannels.length > 0) {
             source = dupayChannels.map(toFrontendShape);
