@@ -1441,6 +1441,101 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
     }
 };
 
+// POST /api/callback/dupay
+export const handleDupayCallback = async (req: Request, res: Response) => {
+    try {
+        const callbackSignature = req.headers['x-dupay-signature'] as string | undefined;
+        const { order_id, status, payment_method, amount } = req.body as {
+            order_id?: string;
+            status?: string;
+            payment_method?: string;
+            amount?: number | string;
+        };
+
+        if (!order_id || !status) {
+            return res.status(400).json({ success: false, message: 'Invalid payload' });
+        }
+
+        const trx = await prisma.transaction.findUnique({ where: { id: String(order_id) } });
+        if (!trx) {
+            return res.status(404).json({ success: false, message: 'Transaction not found' });
+        }
+
+        // Optional signature validation (enabled when DUPAY_WEBHOOK_SECRET is configured)
+        const webhookSecret = process.env.DUPAY_WEBHOOK_SECRET || '';
+        if (webhookSecret && callbackSignature) {
+            const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+            const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+
+            const expectedBuffer = Buffer.from(expected);
+            const callbackBuffer = Buffer.from(callbackSignature);
+            if (expectedBuffer.length !== callbackBuffer.length || !crypto.timingSafeEqual(expectedBuffer, callbackBuffer)) {
+                return res.status(400).json({ success: false, message: 'Invalid signature' });
+            }
+        }
+
+        const normalizedStatus = String(status).toUpperCase();
+        let newStatus: any = trx.status;
+
+        if (normalizedStatus === 'SUCCESS') {
+            newStatus = trx.type === 'DEPOSIT' ? 'SUCCESS' : 'PROCESSING';
+        } else if (normalizedStatus === 'FAILED' || normalizedStatus === 'REFUNDED' || normalizedStatus === 'EXPIRED') {
+            newStatus = 'FAILED';
+        }
+
+        // Idempotency guard
+        if (trx.status === 'SUCCESS' || (trx.status === 'PROCESSING' && newStatus === 'PROCESSING')) {
+            return res.json({ success: true, message: 'Already processed' });
+        }
+
+        if (newStatus !== trx.status) {
+            const paidAmount = Number(amount || trx.amount);
+            await prisma.transaction.update({
+                where: { id: trx.id },
+                data: {
+                    status: newStatus,
+                    amount: Number.isFinite(paidAmount) ? paidAmount : trx.amount,
+                    paymentChannel: payment_method || trx.paymentChannel || null,
+                    updatedAt: new Date(),
+                } as any
+            });
+
+            const io = req.app.get('io');
+            if (io) {
+                io.to(trx.id).emit('transaction_update', {
+                    status: newStatus,
+                    transactionId: trx.id
+                });
+            }
+
+            if (newStatus === 'SUCCESS' && trx.type === 'DEPOSIT' && trx.userId) {
+                await prisma.user.update({
+                    where: { id: trx.userId },
+                    data: { balance: { increment: Number.isFinite(paidAmount) ? paidAmount : trx.amount } }
+                });
+            }
+
+            if (newStatus === 'PROCESSING' && (trx.type === 'TOPUP' || !trx.type)) {
+                if (trx.voucherCode) {
+                    const v = await prisma.voucher.findUnique({ where: { code: trx.voucherCode } });
+                    if (v && v.stock > 0) {
+                        await prisma.voucher.update({
+                            where: { id: v.id },
+                            data: { stock: { decrement: 1 } }
+                        });
+                    }
+                }
+                processGameTopup(trx.id).catch((e) => console.error("❌ [DUPAY-CALLBACK] Background Topup Error:", e));
+            }
+        }
+
+        return res.json({ success: true });
+    } catch (error: any) {
+        console.error("❌ [DUPAY-CALLBACK] Error:", error);
+        return res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+
 // POST /api/check-status/:id
 export const checkTransactionStatus = async (req: Request, res: Response) => {
     try {
