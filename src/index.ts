@@ -283,8 +283,8 @@ const startServer = async () => {
     // 3. Keep-Alive System (Removed - Not needed on Railway)
 
 
-    // Use httpServer instead of app.listen
-    httpServer.listen(PORT, () => {
+    // Use httpServer instead of app.listen explicitly on 0.0.0.0
+    httpServer.listen(Number(PORT), '0.0.0.0', () => {
         logger.info(`Server running on port ${PORT} (with Socket.IO)`);
     });
 };
