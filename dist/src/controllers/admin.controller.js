@@ -34,7 +34,7 @@ export const getDashboardStats = async (req, res) => {
     }
     catch (error) {
         console.error("Admin Stats Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // GET /api/admin/transactions
@@ -84,7 +84,7 @@ export const getAllTransactions = async (req, res) => {
     }
     catch (error) {
         console.error("Admin Transactions Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // PATCH /api/admin/products/:id/price
@@ -105,14 +105,14 @@ export const updateProductPrice = async (req, res) => {
     }
     catch (error) {
         console.error("Update Product Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // GET /api/admin/products
 export const getAllProducts = async (req, res) => {
     try {
         const page = Number(req.query.page) || 1;
-        const limit = Number(req.query.limit) || 50; // More items for products
+        const limit = Number(req.query.limit) || 50;
         const skip = (page - 1) * limit;
         const search = req.query.search;
         const categoryId = req.query.categoryId;
@@ -150,48 +150,134 @@ export const getAllProducts = async (req, res) => {
     }
     catch (error) {
         console.error("Admin Products Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // POST /api/admin/products/sync
-import * as gameProvider from '../services/game.service.js';
+import * as vipService from '../services/vip.service.js';
+import * as fs from 'fs';
+import * as path from 'path';
 export const syncProducts = async (req, res) => {
-    console.log('🔄 [SYNC] Starting Product Sync (VIP/Game Provider)...');
     try {
-        // 1. Fetch ALL Services from Provider (One Request)
-        const result = await gameProvider.getMerchantServices();
+        // 1. Fetch from Provider
+        console.log('🔄 [SYNC] Fetching products from VIP...');
+        const result = await vipService.getMerchantServices(); // Use direct export
         if (!result.success || !Array.isArray(result.data)) {
-            throw new Error(result.message || "Failed to fetch services from provider");
+            return res.status(400).json({ success: false, message: result.message || 'No products found' });
         }
         const providerServices = result.data;
-        console.log(`📦 [SYNC] Received ${providerServices.length} services from Provider.`);
-        // 2. Get All Active Categories
+        console.log(`📦 [SYNC] Received ${providerServices.length} services from VIP.`);
+        // [NEW] Load Manual Category Mapping from JSON (Generated from Excel)
+        let manualCats = new Map();
+        try {
+            const mappingPath = path.join(process.cwd(), 'category_mapping.json'); // Fix path to root
+            if (fs.existsSync(mappingPath)) {
+                const rawMapping = fs.readFileSync(mappingPath, 'utf-8');
+                const mappingData = JSON.parse(rawMapping);
+                mappingData.forEach((item) => {
+                    // Map by Name (e.g. "Mobile Legends A") AND Brand
+                    if (item.name)
+                        manualCats.set(item.name.toLowerCase(), item);
+                    // if (item.brand) manualCats.set(item.brand.toLowerCase(), item); // Don't map by brand generic, only specific name?
+                    // Actually, if Excel has specific "Mobile Legends A", we want to map "Mobile Legends A" products to that ID.
+                });
+                console.log(`📂 [SYNC] Loaded ${mappingData.length} manual category mappings.`);
+            }
+            else {
+                console.warn(`⚠️ [SYNC] Mapping file not found at ${mappingPath}`);
+            }
+        }
+        catch (e) {
+            console.error("❌ Failed to load category mapping:", e);
+        }
+        // 2. Get All Active Categories for mapping
         const categories = await prisma.category.findMany({
             where: { isActive: true }
         });
-        // Map Category Code/Name
         const catMap = new Map();
         categories.forEach(c => {
             if (c.code)
                 catMap.set(c.code.toLowerCase(), c);
             catMap.set(c.name.toLowerCase(), c);
+            catMap.set(c.slug.toLowerCase(), c); // Added slug for robust matching
         });
-        // 🚨 RESET STEP: Mark ALL products as Inactive first.
-        // This ensures that products no longer available from Provider will remain Inactive.
-        console.log('🧹 [SYNC] Resetting all products to Inactive (Smart Sync)...');
-        await prisma.product.updateMany({
-            data: { isActive: false }
-        });
+        // 3. Attempt to Clear Database
+        // User requested "kosongkan db" (Empty DB).
+        // This might fail if products are linked to transactions.
+        try {
+            console.log('🗑️ [SYNC] Attempting to delete all existing products...');
+            await prisma.product.deleteMany({});
+            console.log('✅ [SYNC] Database cleared successfully.');
+        }
+        catch (dbError) {
+            console.warn('⚠️ [SYNC] Could not clear database (likely due to existing transactions). Proceeding with soft-sync (Update/Insert).');
+            // Fallback: Mark all as Inactive first so we know what's obsolete
+            await prisma.product.updateMany({
+                data: { isActive: false }
+            });
+        }
         let totalUpdated = 0;
         let totalCreated = 0;
+        let totalCategoriesCreated = 0; // Track created categories
         let skipped = 0;
         let processedCount = 0;
         const totalItems = providerServices.length;
         const io = req.app.get('io'); // Get Socket Instance
-        // 3. Process Each Service
+        // Helper: Determine Group (Ported from Microservice)
+        const determineGroup = (game, name) => {
+            const nameLower = name.toLowerCase();
+            const gameLower = game.toLowerCase();
+            let group = game; // Default Group is Game Name
+            if (gameLower.includes("mobile") && gameLower.includes("legend")) {
+                if (nameLower.includes("starlight") || nameLower.includes("twilight") || nameLower.includes("pass") || nameLower.includes("weekly")) {
+                    group = "Membership";
+                }
+                else if (nameLower.includes("joki") || nameLower.includes("win") || nameLower.includes("rank")) {
+                    group = "Joki Rank";
+                }
+                else if (nameLower.includes("global") || nameLower.includes("server")) {
+                    if (nameLower.includes("indonesia")) {
+                        group = "Indonesia Server";
+                    }
+                    else {
+                        group = "Global Server";
+                    }
+                }
+            }
+            else if (gameLower.includes("free") && gameLower.includes("fire")) {
+                if (nameLower.includes("member") || nameLower.includes("mingguan") || nameLower.includes("bulanan")) {
+                    group = "Membership";
+                }
+                else if (nameLower.includes("level up")) {
+                    group = "Event";
+                }
+            }
+            return group;
+        };
+        // Helper: Normalize Brand (Group variations into one Game Brand)
+        const normalizeBrand = (name) => {
+            const lower = name.toLowerCase();
+            if (lower.includes("mobile") && lower.includes("legend"))
+                return "Mobile Legends";
+            if (lower.includes("free") && lower.includes("fire"))
+                return "Free Fire";
+            if (lower.includes("pubg"))
+                return "PUBG Mobile";
+            if (lower.includes("genshin"))
+                return "Genshin Impact";
+            if (lower.includes("honkai"))
+                return "Honkai: Star Rail";
+            if (lower.includes("valorant"))
+                return "Valorant";
+            if (lower.includes("cod") || lower.includes("call of duty"))
+                return "Call of Duty Mobile";
+            // Default: Use full name, maybe strip common suffixes if generic logic needed
+            return name;
+        };
+        // 4. Process Each Service
         for (const item of providerServices) {
             processedCount++;
-            // Emit Progress every 20 items or at 100%
+            // Emit Progress
             if (processedCount % 20 === 0 || processedCount === totalItems) {
                 if (io) {
                     io.emit('admin_sync_progress', {
@@ -203,19 +289,97 @@ export const syncProducts = async (req, res) => {
             }
             // item: { code, name, category (game), price, status }
             // Find Matching Category
-            const catKey = (item.category || '').toLowerCase();
-            const category = catMap.get(catKey);
+            let catName = (item.category || 'Unknown Game').trim();
+            const catKey = catName.toLowerCase();
+            // Initialize category variable for scope
+            let category = null;
+            // NEW: Check Manual Mapping first
+            const mappedCat = manualCats.get(catKey);
+            if (mappedCat) {
+                // Try to find by ID first (Most reliable)
+                category = await prisma.category.findUnique({ where: { id: mappedCat.id } });
+                if (!category) {
+                    // Create with forced ID
+                    const slug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                    const brand = normalizeBrand(catName);
+                    try {
+                        category = await prisma.category.create({
+                            data: {
+                                id: mappedCat.id, // FORCE ID
+                                name: catName,
+                                slug: slug + '-' + Math.floor(Math.random() * 1000),
+                                code: slug,
+                                isActive: true,
+                                brand: brand
+                            }
+                        });
+                        console.log(`✨ [SYNC] Created Mapped Category: ${catName} | ID: ${mappedCat.id}`);
+                        totalCategoriesCreated++;
+                    }
+                    catch (e) {
+                        console.error(`❌ Failed to create mapped category ${catName}`, e);
+                    }
+                }
+            }
+            // Fallback: Standard Lookup if not found via Mapping
             if (!category) {
-                // console.warn(`⚠️ Skipping service '${item.name}' - Category '${item.category}' not found in DB.`);
-                skipped++;
-                continue;
+                category = catMap.get(catKey);
+            }
+            // If not found by direct name, try slugifying the name and checking
+            if (!category) {
+                const potentialSlug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                category = catMap.get(potentialSlug);
+            }
+            // [NEW] Ensure Existing Category has correct Brand (Self-Healing)
+            if (category) {
+                const correctBrand = normalizeBrand(category.name);
+                if (category.brand !== correctBrand) {
+                    await prisma.category.update({
+                        where: { id: category.id },
+                        data: { brand: correctBrand }
+                    });
+                    // Update local map reference
+                    category.brand = correctBrand;
+                    // console.log(`🔧 [SYNC] Fixed Brand for Category: ${category.name} -> ${correctBrand}`);
+                }
+            }
+            // Auto-Create Category if missing (and not mapped)
+            if (!category) {
+                try {
+                    // Generate Slug
+                    const slug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                    const brand = normalizeBrand(catName);
+                    category = await prisma.category.create({
+                        data: {
+                            name: catName,
+                            slug: slug + '-' + Math.floor(Math.random() * 1000), // Ensure unique slug
+                            code: slug, // Use slug as code initially
+                            isActive: true, // Auto-active
+                            brand: brand
+                        }
+                    });
+                    // Add to Map so we don't create it again for next product
+                    catMap.set(catKey, category);
+                    if (category.code)
+                        catMap.set(category.code.toLowerCase(), category);
+                    catMap.set(category.slug.toLowerCase(), category);
+                    console.log(`✨ [SYNC] Auto-Created Category: ${catName} | Brand: ${brand}`);
+                    totalCategoriesCreated++;
+                }
+                catch (catError) {
+                    console.error(`❌ Failed to auto-create category ${catName}:`, catError);
+                    skipped++;
+                    continue; // Skip product if category creation failed
+                }
             }
             // Logic: Selling Price
             const providerPrice = Number(item.price);
             const margin = category.profitMargin || 5.0;
             const rawSellingPrice = providerPrice + (providerPrice * (margin / 100));
             const sellingPrice = Math.ceil(rawSellingPrice);
-            // Upsert
+            // Calculate Group
+            const group = determineGroup(catName, item.name);
+            // Upsert (Works for both Fresh Start and Update scenarios)
             const existing = await prisma.product.findUnique({ where: { sku_code: item.code } });
             if (existing) {
                 await prisma.product.update({
@@ -223,8 +387,14 @@ export const syncProducts = async (req, res) => {
                     data: {
                         name: item.name,
                         price_provider: providerPrice,
+                        // price_sell: sellingPrice, // Optional: Update or keep manual override? 
+                        // Let's update it if it's 0, otherwise maybe respect previous manual edits? 
+                        // User asked "why products wrong", usually implies strict sync.
+                        // But let's stick to update price logic from before:
                         price_sell: sellingPrice,
-                        isActive: item.status,
+                        isActive: item.status !== false, // VIP returns boolean or check
+                        categoryId: category.id, // CRITICAL FIX
+                        group: group, // CRITICAL FIX
                         updatedAt: new Date()
                     }
                 });
@@ -238,19 +408,21 @@ export const syncProducts = async (req, res) => {
                         price_provider: providerPrice,
                         price_sell: sellingPrice,
                         categoryId: category.id,
-                        isActive: item.status
+                        group: group, // CRITICAL FIX
+                        isActive: item.status !== false
                     }
                 });
                 totalCreated++;
             }
         }
-        console.log(`✅ [SYNC] Completed. Updated: ${totalUpdated}, Created: ${totalCreated}, Skipped: ${skipped}`);
+        console.log(`✅ [SYNC] Completed. Updated: ${totalUpdated}, Created: ${totalCreated}, New Categories: ${totalCategoriesCreated}, Skipped: ${skipped}`);
         res.json({
             success: true,
             message: "Sync Completed",
             data: {
                 updated: totalUpdated,
                 created: totalCreated,
+                newCategories: totalCategoriesCreated,
                 skipped,
                 total: providerServices.length
             }
@@ -258,7 +430,7 @@ export const syncProducts = async (req, res) => {
     }
     catch (error) {
         console.error('❌ Sync Error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // GET /api/admin/categories
@@ -315,7 +487,7 @@ export const getAllCategories = async (req, res) => {
     }
     catch (error) {
         console.error("Get Categories Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // PATCH /api/admin/categories/:id
@@ -356,7 +528,361 @@ export const updateCategory = async (req, res) => {
     }
     catch (error) {
         console.error("Update Category Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+import axios from 'axios';
+import * as ipaymuService from '../services/ipaymu.service.js';
+// POST /api/admin/transactions/:id/retry
+export const retryTransaction = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { processGameTopup } = await import('./transaction.controller.js');
+        const gameProvider = await import('../services/game.service.js');
+        const whatsappService = await import('../services/whatsapp.service.js');
+        const trxId = String(id);
+        const trx = await prisma.transaction.findUnique({
+            where: { id: trxId },
+            include: { product: true }
+        });
+        if (!trx) {
+            return res.status(404).json({ success: false, message: 'Transaction not found' });
+        }
+        const isDeposit = trx.type === 'DEPOSIT';
+        // 1. Basic Validation
+        if (trx.status === 'SUCCESS') {
+            return res.status(400).json({ success: false, message: 'Transaction is already successful' });
+        }
+        // For TOPUP (Game), product is required. For DEPOSIT, it isn't.
+        if (!isDeposit && !trx.product) {
+            return res.status(404).json({ success: false, message: 'Product missing for topup transaction' });
+        }
+        if (isDeposit) {
+            console.log(`🚀 [DEPOSIT-RETRY] Syncing with gateway for invoice ${trx.invoice}...`);
+            if (!trx.paymentTrxId) {
+                return res.status(400).json({ success: false, message: 'Payment Reference (paymentTrxId) missing. Cannot sync with gateway.' });
+            }
+            let payCheck = { success: false };
+            const gateway = trx.paymentGateway || 'IPAYMU';
+            if (gateway === 'IPAYMU') {
+                payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
+            }
+            else if (gateway === 'TRIPAY') {
+                const configs = await prisma.systemConfig.findMany({
+                    where: { key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] } }
+                });
+                const configMap = {};
+                configs.forEach((c) => configMap[c.key] = c.value);
+                const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                const apiKey = mode === 'SANDBOX' ? configMap['TRIPAY_SB_API_KEY'] : configMap['TRIPAY_PROD_API_KEY'];
+                const baseUrl = mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
+                try {
+                    const response = await axios.get(`${baseUrl}/transaction/check-status`, {
+                        params: { reference: trx.paymentTrxId },
+                        headers: { 'Authorization': `Bearer ${apiKey}` },
+                        validateStatus: (status) => status < 999
+                    });
+                    const data = response.data;
+                    // Tripay Check Status returns { success: true, message: "Status transaksi saat ini PAID" }
+                    if (data?.success && data.message?.includes('PAID')) {
+                        payCheck = { success: true, status: 6, statusDesc: 'Berhasil' };
+                    }
+                }
+                catch (err) {
+                    console.error(`❌ [TRIPAY] Check Status Error:`, err.response?.data || err.message);
+                }
+            }
+            if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
+                // Payment confirmed!
+                await prisma.$transaction(async (tx) => {
+                    await tx.transaction.update({
+                        where: { id: trxId },
+                        data: { status: 'SUCCESS', updatedAt: new Date() }
+                    });
+                    if (trx.userId) {
+                        await tx.user.update({
+                            where: { id: trx.userId },
+                            data: { balance: { increment: trx.amount } }
+                        });
+                    }
+                });
+                // Send WA notification
+                let targetWa = trx.guestContact;
+                if (!targetWa && trx.userId) {
+                    const u = await prisma.user.findUnique({ where: { id: trx.userId } });
+                    if (u)
+                        targetWa = u.phoneNumber;
+                }
+                if (targetWa) {
+                    const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n💰 *PEMBAYARAN TERVERIFIKASI*\nInvoice: *${trx.invoice}*\nStatus: BERHASIL (Manual Retry)\nTotal: Rp${trx.amount.toLocaleString('id-ID')}\n\nSaldo Anda telah ditambahkan. Terima kasih!`;
+                    whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
+                }
+                return res.json({ success: true, message: 'Payment verified and balance added successfully.' });
+            }
+            else {
+                return res.status(400).json({ success: false, message: 'Gateway reports payment is still pending or failed.' });
+            }
+        }
+        // 1.5. MANDATORY GATEWAY CHECK for PENDING Game Topups (User Protection) 🛡️
+        if (!isDeposit && trx.status === 'PENDING') {
+            console.log(`🔍 [SAFE-RETRY] Verifying Gateway status for PENDING Game Topup: ${trx.invoice}...`);
+            if (!trx.paymentTrxId) {
+                return res.status(400).json({ success: false, message: 'Payment Reference missing. Cannot verify payment status.' });
+            }
+            let payCheck = { success: false };
+            let gateway = trx.paymentGateway;
+            if (!gateway) {
+                const cfg = await prisma.systemConfig.findUnique({ where: { key: 'PAYMENT_GATEWAY' } });
+                gateway = cfg?.value || 'TRIPAY';
+            }
+            if (gateway === 'IPAYMU') {
+                const ipaymuService = await import('../services/ipaymu.service.js');
+                payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
+            }
+            else if (gateway === 'TRIPAY') {
+                const configs = await prisma.systemConfig.findMany({
+                    where: { key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] } }
+                });
+                const configMap = {};
+                configs.forEach((c) => configMap[c.key] = c.value);
+                const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                const apiKey = mode === 'SANDBOX' ? configMap['TRIPAY_SB_API_KEY'] : configMap['TRIPAY_PROD_API_KEY'];
+                const baseUrl = mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
+                try {
+                    const axios = (await import('axios')).default;
+                    const response = await axios.get(`${baseUrl}/transaction/check-status`, {
+                        params: { reference: trx.paymentTrxId },
+                        headers: { 'Authorization': `Bearer ${apiKey}` },
+                        validateStatus: (status) => status < 999
+                    });
+                    if (response.data?.success && response.data.message === 'PAID') {
+                        payCheck = { success: true, status: 6, statusDesc: 'Berhasil' };
+                    }
+                }
+                catch (err) {
+                    console.error(`❌ [TRIPAY] Check Status Error:`, err.message);
+                }
+            }
+            if (payCheck.success && (payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
+                console.log(`✅ [SAFE-RETRY] Payment confirmed! Updating status to PROCESSING.`);
+                await prisma.transaction.update({
+                    where: { id: trxId },
+                    data: { status: 'PROCESSING', updatedAt: new Date() }
+                });
+                // Continue to provider logic below
+            }
+            else {
+                return res.status(400).json({ success: false, message: 'CRITICAL: Payment is still PENDING at Gateway. Admin cannot retry order until user pays!' });
+            }
+        }
+        // --- CONTINUE WITH TOPUP (GAME) RETRY LOGIC ---
+        console.log(`🔄 [SAFE-RETRY] Analyzing Topup Transaction: ${trx.invoice} (${trxId})`);
+        // 2. [INQUIRY BEFORE ORDER] 🛡️
+        // Check if the provider already has a successful record for this invoice
+        let checkResult = null;
+        if (gameProvider.PROVIDER === 'APIGAMES') {
+            // Apigames allows inquiry by our Invoice (ref_id)
+            checkResult = await gameProvider.checkTransaction(trx.invoice);
+        }
+        else if (gameProvider.PROVIDER === 'VIP' && trx.providerTrxId) {
+            // VIP requires their ID
+            checkResult = await gameProvider.checkTransaction(trx.invoice, trx.providerTrxId);
+        }
+        if (checkResult && checkResult.success && checkResult.data) {
+            const pStatus = checkResult.data.status?.toLowerCase();
+            console.log(`🔍 [SAFE-RETRY] Provider reported status: ${pStatus}`);
+            // If it's already success or on-process at provider, DON'T re-order.
+            if (pStatus === 'success' || pStatus === 'processing' || pStatus === 'waiting' || pStatus === '1') {
+                console.log(`✅ [SAFE-RETRY] Found existing record at provider. Updating DB instead of re-ordering.`);
+                const newStatus = pStatus === 'success' || pStatus === '1' ? 'SUCCESS' : 'PROCESSING';
+                await prisma.transaction.update({
+                    where: { id: trxId },
+                    data: {
+                        status: newStatus,
+                        sn: checkResult.data.sn || trx.sn,
+                        providerTrxId: checkResult.data.trxId || trx.providerTrxId,
+                        providerStatus: checkResult.data.status,
+                        updatedAt: new Date()
+                    }
+                });
+                return res.json({
+                    success: true,
+                    message: `Existing transaction found at provider (${newStatus}). DB Updated.`,
+                    data: checkResult.data
+                });
+            }
+        }
+        // 3. If no existing successful record found -> Proceed to Re-Order
+        console.log(`🚀 [SAFE-RETRY] No active record found at provider. Placing new order...`);
+        // Reset providerStatus to allow lock to be acquired in processGameTopup
+        await prisma.transaction.update({
+            where: { id: trxId },
+            data: { providerStatus: null }
+        });
+        const result = await processGameTopup(trxId);
+        if (result.success) {
+            res.json({ success: true, message: 'New order placed successfully', data: result });
+        }
+        else {
+            res.status(400).json({ success: false, message: result.message || 'Retry failed at provider' });
+        }
+    }
+    catch (error) {
+        console.error("Safe Retry Error:", error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+// ===== PAYMENT METHOD MANAGEMENT =====
+// Payment channels list (imported from frontend for consistency)
+const PAYMENT_CHANNELS = [
+    { code: 'qris', name: 'QRIS', method: 'qris', group: 'QRIS' },
+    { code: 'bca', name: 'BCA Virtual Account', method: 'va', group: 'Virtual Account' },
+    { code: 'mandiri', name: 'Mandiri Virtual Account', method: 'va', group: 'Virtual Account' },
+    { code: 'bni', name: 'BNI Virtual Account', method: 'va', group: 'Virtual Account' },
+    { code: 'bri', name: 'BRI Virtual Account', method: 'va', group: 'Virtual Account' },
+    { code: 'cimb', name: 'CIMB Niaga VA', method: 'va', group: 'Virtual Account' },
+    { code: 'permata', name: 'Permata Virtual Account', method: 'va', group: 'Virtual Account' },
+    { code: 'indomaret', name: 'Indomaret', method: 'cstore', group: 'Retail' },
+    { code: 'alfamart', name: 'Alfamart', method: 'cstore', group: 'Retail' },
+    { code: 'dana', name: 'DANA', method: 'ewallet', group: 'E-Wallet' },
+    { code: 'ovo', name: 'OVO', method: 'ewallet', group: 'E-Wallet' },
+    { code: 'shopeepay', name: 'ShopeePay', method: 'ewallet', group: 'E-Wallet' },
+    { code: 'linkaja', name: 'LinkAja', method: 'ewallet', group: 'E-Wallet' }
+];
+// GET /api/admin/payment-methods - Get all payment methods with status
+export const getPaymentMethods = async (req, res) => {
+    try {
+        // Get all payment method configs from SystemConfig
+        const configs = await prisma.systemConfig.findMany({
+            where: {
+                key: {
+                    startsWith: 'payment_method_'
+                }
+            }
+        });
+        // Create a map of code -> status
+        const statusMap = {};
+        configs.forEach((config) => {
+            const code = config.key.replace('payment_method_', '');
+            statusMap[code] = config.value === 'active';
+        });
+        // Return all payment methods with their active status
+        const methods = PAYMENT_CHANNELS.map(channel => ({
+            ...channel,
+            active: statusMap[channel.code] !== undefined ? statusMap[channel.code] : true // default active
+        }));
+        res.json({ success: true, data: methods });
+    }
+    catch (error) {
+        console.error("Get Payment Methods Error:", error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+// POST /api/admin/payment-methods/toggle - Toggle payment method active/inactive
+export const togglePaymentMethod = async (req, res) => {
+    try {
+        const { code, active } = req.body;
+        if (!code) {
+            return res.status(400).json({ success: false, message: 'Payment method code is required' });
+        }
+        // Validate that this is a valid payment method
+        const validMethod = PAYMENT_CHANNELS.find(ch => ch.code === code);
+        if (!validMethod) {
+            return res.status(400).json({ success: false, message: 'Invalid payment method code' });
+        }
+        // Update or create SystemConfig entry
+        const key = `payment_method_${code}`;
+        const value = active ? 'active' : 'inactive';
+        await prisma.systemConfig.upsert({
+            where: { key },
+            update: { value },
+            create: { key, value, description: `Status for ${validMethod.name}` }
+        });
+        console.log(`[PAYMENT-METHOD] ${code} set to ${value}`);
+        res.json({
+            success: true,
+            message: `Payment method ${validMethod.name} ${active ? 'enabled' : 'disabled'}`,
+            data: { code, active }
+        });
+    }
+    catch (error) {
+        console.error("Toggle Payment Method Error:", error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+// ===== REVIEW MODERATION =====
+// GET /api/admin/reviews - Get all reviews (pending + approved)
+export const getAllReviews = async (req, res) => {
+    try {
+        const { pending } = req.query;
+        const whereClause = pending === 'true' ? { isApproved: false } : {};
+        const reviews = await prisma.review.findMany({
+            where: whereClause,
+            include: {
+                user: {
+                    select: {
+                        name: true,
+                        email: true
+                    }
+                },
+                category: {
+                    select: {
+                        name: true,
+                        slug: true
+                    }
+                }
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        });
+        res.json({ success: true, data: reviews });
+    }
+    catch (error) {
+        console.error("Get All Reviews Error:", error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+// PATCH /api/admin/reviews/:id/approve
+export const approveReview = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const review = await prisma.review.update({
+            where: { id },
+            data: { isApproved: true },
+            include: {
+                user: { select: { name: true, email: true } },
+                category: { select: { name: true } }
+            }
+        });
+        console.log(`[REVIEW] Approved review ${id} for ${review.category.name}`);
+        res.json({
+            success: true,
+            message: 'Review approved successfully',
+            data: review
+        });
+    }
+    catch (error) {
+        console.error("Approve Review Error:", error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+// DELETE /api/admin/reviews/:id
+export const deleteReview = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await prisma.review.delete({
+            where: { id }
+        });
+        console.log(`[REVIEW] Deleted review ${id}`);
+        res.json({
+            success: true,
+            message: 'Review deleted successfully'
+        });
+    }
+    catch (error) {
+        console.error("Delete Review Error:", error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 //# sourceMappingURL=admin.controller.js.map

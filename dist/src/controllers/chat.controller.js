@@ -1,4 +1,5 @@
 import { ChatService } from '../services/chat.service.js';
+import jwt from 'jsonwebtoken';
 export const startSession = async (req, res) => {
     try {
         const { guestName, guestEmail } = req.body;
@@ -19,7 +20,12 @@ export const startSession = async (req, res) => {
                 session = await ChatService.createSession({ guestName: guestName || 'Guest', guestEmail });
             }
         }
-        res.json({ success: true, sessionId: session.id, session });
+        res.json({
+            success: true,
+            sessionId: session.id,
+            sessionToken: session.sessionToken, // Return token for guest security
+            session
+        });
     }
     catch (error) {
         res.status(500).json({ success: false, message: 'Failed to start chat session' });
@@ -44,40 +50,48 @@ export const getMySessions = async (req, res) => {
 export const getSessionById = async (req, res) => {
     try {
         const { sessionId } = req.params;
+        const { token: guestToken } = req.query; // Optional token for guest access
         if (!sessionId || typeof sessionId !== 'string') {
             return res.status(400).json({ success: false, message: 'Invalid Session ID' });
         }
         const session = await ChatService.getSession(sessionId);
         if (!session)
             return res.status(404).json({ success: false, message: 'Session not found' });
-        // Security Check: If session belongs to a user, verify the requestor is that user
-        if (session.userId) {
-            // Retrieve token from header manually since this route is public optional
-            const authHeader = req.headers['authorization'];
-            const token = authHeader && authHeader.split(' ')[1];
-            if (!token) {
-                return res.status(403).json({ success: false, message: 'Unauthorized access to user session' });
-            }
+        // --- AUTHENTICATION & AUTHORIZATION ---
+        let isAdmin = false;
+        let authUserId = null;
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+        if (token && process.env.JWT_SECRET) {
             try {
-                if (!process.env.JWT_SECRET)
-                    throw new Error("No Secret");
-                // dynamic import or just rely on global jwt if imported? 
-                // We need to import jwt if not present at top. 
-                // Assuming jwt imported or I'll add the import.
-                // Checking imports... ChatController doesn't import jwt.
-                // I will add the import in a separate block or hack it here if I could.
-                // Better to simple check:
-                // Let's assume the user IS authenticated via middleware?
-                // No, the route is public. 
-                // I'll decoding it here.
-                const jwt = (await import('jsonwebtoken')).default;
                 const decoded = jwt.verify(token, process.env.JWT_SECRET);
-                if (decoded.id !== session.userId && decoded.role !== 'ADMIN') {
-                    return res.status(403).json({ success: false, message: 'Forbidden' });
+                if (decoded) {
+                    isAdmin = decoded.role === 'ADMIN';
+                    authUserId = decoded.id;
                 }
             }
             catch (e) {
-                return res.status(403).json({ success: false, message: 'Invalid Token' });
+                // Invalid token, treat as guest/unauthenticated (or fail if verified user required)
+            }
+        }
+        // 1. Session belongs to a Registered User
+        if (session.userId) {
+            if (!token) { // User sessions require login
+                return res.status(403).json({ success: false, message: 'Unauthorized access to user session' });
+            }
+            // Check ownership or admin
+            if (authUserId !== session.userId && !isAdmin) {
+                return res.status(403).json({ success: false, message: 'Forbidden' });
+            }
+        }
+        // 2. Session is a Guest Session
+        else {
+            // Guest Session Security: Token required to prevent IDOR (unless Admin)
+            const isValidToken = (queryToken, sessionToken) => {
+                return sessionToken && queryToken === sessionToken;
+            };
+            if (!isAdmin && !isValidToken(guestToken, session.sessionToken)) {
+                return res.status(403).json({ success: false, message: 'Access Denied: Invalid or Missing Session Token' });
             }
         }
         res.json({ success: true, session });
@@ -97,9 +111,28 @@ export const getActiveSessions = async (req, res) => {
 };
 export const endSession = async (req, res) => {
     try {
-        const { sessionId } = req.body;
+        const { sessionId, sessionToken } = req.body;
         if (!sessionId)
             return res.status(400).json({ success: false, message: 'Session ID required' });
+        const session = await ChatService.getSession(sessionId);
+        if (!session)
+            return res.status(404).json({ success: false, message: 'Session not found' });
+        // Security Check: Only Owner or Admin can close
+        const authUser = req.user;
+        const isAdmin = authUser?.role === 'ADMIN';
+        if (session.userId) {
+            const isOwner = authUser && authUser.id === session.userId;
+            if (!isOwner && !isAdmin) {
+                return res.status(403).json({ success: false, message: 'Access Denied' });
+            }
+        }
+        else {
+            // Guest Session Security: Token required
+            if (!isAdmin && sessionToken !== session.sessionToken) {
+                console.warn(`[CHAT-SECURITY] Attempt to close guest session ${sessionId} without valid token.`);
+                return res.status(403).json({ success: false, message: 'Access Denied: Invalid Session Token' });
+            }
+        }
         await ChatService.closeSession(sessionId);
         res.json({ success: true, message: 'Session ended' });
     }

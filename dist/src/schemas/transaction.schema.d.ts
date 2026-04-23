@@ -6,15 +6,15 @@ export declare const createTransactionSchema: z.ZodObject<{
     paymentMethod: z.ZodEnum<{
         va: "va";
         qris: "qris";
-        BALANCE: "BALANCE";
+        ewallet: "ewallet";
+        cstore: "cstore";
         QRIS: "QRIS";
+        BALANCE: "BALANCE";
         VA: "VA";
         EWALLET: "EWALLET";
         RETAIL: "RETAIL";
         Qris: "Qris";
         CreditCard: "CreditCard";
-        cstore: "cstore";
-        ewallet: "ewallet";
         cc: "cc";
         cod: "cod";
         paylater: "paylater";

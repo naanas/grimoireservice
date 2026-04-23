@@ -17,7 +17,7 @@ Sentry.init({
     integrations: [
         nodeProfilingIntegration(),
     ],
-    tracesSampleRate: 1.0,
+    tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0, // 10% in prod, 100% in dev
 });
 
 // FIX: Allow self-signed certificates for development/internal (fixes "UNABLE_TO_VERIFY_LEAF_SIGNATURE")

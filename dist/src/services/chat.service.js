@@ -2,11 +2,14 @@ import { PrismaClient, Role } from '@prisma/client';
 const prisma = new PrismaClient();
 export const ChatService = {
     async createSession(data) {
+        const crypto = await import('crypto');
+        const sessionToken = data.userId ? null : crypto.randomBytes(32).toString('hex');
         return await prisma.chatSession.create({
             data: {
                 userId: data.userId ?? null,
                 guestName: data.guestName ?? null,
                 guestEmail: data.guestEmail ?? null,
+                sessionToken: sessionToken,
                 isActive: true
             },
             include: {
@@ -98,6 +101,11 @@ export const ChatService = {
         return session;
     },
     async addMessage(sessionId, sender, content) {
+        // Update session's updatedAt timestamp to keep it alive
+        await prisma.chatSession.update({
+            where: { id: sessionId },
+            data: { updatedAt: new Date() }
+        });
         return await prisma.chatMessage.create({
             data: {
                 sessionId,

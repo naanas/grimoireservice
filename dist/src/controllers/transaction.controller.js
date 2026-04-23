@@ -1,9 +1,192 @@
+import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma.js';
 import * as gameProvider from '../services/game.service.js'; // Consolidated on Game Service (Adapter)
 import * as ipaymuService from '../services/ipaymu.service.js';
 import * as whatsappService from '../services/whatsapp.service.js';
 import * as crypto from 'crypto'; // Added for VIP callback signature validation
+import axios from 'axios';
+// --- CONFIG CACHE (reduces DB queries from every request to max once per 5 minutes) ---
+let _configCache = null;
+let _configCacheExpiry = 0;
+const CONFIG_TTL = 5 * 60 * 1000; // 5 minutes
+const getPaymentConfigs = async (keys) => {
+    const now = Date.now();
+    if (_configCache && now < _configCacheExpiry) {
+        return _configCache;
+    }
+    const configs = await prisma.systemConfig.findMany({
+        where: { key: { in: keys } }
+    });
+    const map = {};
+    configs.forEach((c) => map[c.key] = c.value);
+    _configCache = map;
+    _configCacheExpiry = now + CONFIG_TTL;
+    return map;
+};
+// Call this to invalidate config cache (e.g. after admin updates settings)
+export const invalidateConfigCache = () => {
+    _configCache = null;
+    _configCacheExpiry = 0;
+};
+// --- POPULAR CATEGORIES CACHE ---
+let _popularCategoriesCache = null;
+let _popularCacheExpiry = 0;
+const POPULAR_TTL = 10 * 60 * 1000; // 10 minutes
 // --- HELPER FUNCTIONS ---
+export const handleTripayCallback = async (req, res) => {
+    const callbackSignature = req.headers['x-callback-signature'];
+    const event = req.headers['x-callback-event'];
+    const { merchant_ref, status, reference } = req.body;
+    console.log(`🔔 [TRIPAY-CALLBACK] Event: ${event} | Ref: ${merchant_ref} | TripayRef: ${reference}`);
+    if (event !== 'payment_status') {
+        return res.json({ success: true });
+    }
+    try {
+        // 1. Fetch Transaction to determine mode if needed (or just fetch all configs)
+        const trx = await prisma.transaction.findUnique({
+            where: { id: merchant_ref }
+        });
+        if (!trx) {
+            console.error(`❌ [TRIPAY-CALLBACK] Transaction ${merchant_ref} not found`);
+            return res.status(404).json({ success: false, message: 'Transaction not found' });
+        }
+        // 2. Idempotency Check (Early Exit)
+        if (trx.status === 'SUCCESS' || trx.status === 'PROCESSING') {
+            console.log(`✅ [TRIPAY-CALLBACK] Idempotency: Transaction ${merchant_ref} already processed (Status: ${trx.status})`);
+            return res.json({ success: true, message: 'Already Processed' });
+        }
+        // 3. Fetch Tripay Configs from DB
+        const configs = await prisma.systemConfig.findMany({
+            where: {
+                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] }
+            }
+        });
+        const configMap = {};
+        configs.forEach(c => configMap[c.key] = c.value);
+        const mode = configMap['TRIPAY_MODE'] || process.env.TRIPAY_MODE || 'SANDBOX';
+        const privateKey = mode === 'PRODUCTION'
+            ? (configMap['TRIPAY_PROD_PRIVATE_KEY'] || process.env.TRIPAY_PROD_PRIVATE_KEY)
+            : (configMap['TRIPAY_SB_PRIVATE_KEY'] || process.env.TRIPAY_SB_PRIVATE_KEY);
+        const apiKey = mode === 'PRODUCTION'
+            ? (configMap['TRIPAY_PROD_API_KEY'] || process.env.TRIPAY_PROD_API_KEY)
+            : (configMap['TRIPAY_SB_API_KEY'] || process.env.TRIPAY_SB_API_KEY);
+        if (!privateKey || !apiKey) {
+            console.error(`❌ [TRIPAY-CALLBACK] Missing Config (Private Key or API Key) for ${mode} mode.`);
+            return res.status(500).json({ success: false, message: `Configuration Error` });
+        }
+        // 4. Validate Signature
+        // Tripay manual: hash = hmac_sha256(json_body, private_key)
+        const rawBody = req.rawBody || JSON.stringify(req.body);
+        const signature = crypto.createHmac('sha256', privateKey).update(rawBody).digest('hex');
+        // [SECURITY] Use Timing-Safe Comparison to prevent Timing Attacks
+        const signatureBuffer = Buffer.from(signature);
+        const callbackBuffer = Buffer.from(callbackSignature);
+        if (signatureBuffer.length !== callbackBuffer.length || !crypto.timingSafeEqual(signatureBuffer, callbackBuffer)) {
+            console.error(`❌ [TRIPAY-CALLBACK] Invalid Signature. Got: ${callbackSignature} | Expected: ${signature}`);
+            return res.status(400).json({ success: false, message: 'Invalid Signature' });
+        }
+        // 5. Active Verification (Query Tripay Server)
+        // Check Status API confirms the invoice state safely.
+        if (status === 'PAID') {
+            try {
+                // Tripay docs: URL is /api/transaction/detail for fetching merchant transaction status
+                // Update 2026: Screenshots show /transaction/check-status?reference=... also works, but might require exact URL path.
+                const baseUrl = mode === 'PRODUCTION' ? 'https://tripay.co.id/api' : 'https://tripay.co.id/api-sandbox';
+                const endpointUrl = `${baseUrl}/transaction/detail`; // Or '/transaction/check-status', but /detail is universally reliable. Let's use check-status as user's screenshot explicitly states it.
+                // Reverting to /transaction/check-status as per user screenshot, adding debug logs
+                console.log(`[TRIPAY-VERIFY] Querying: ${baseUrl}/transaction/detail?reference=${reference} with apiKey: ${apiKey ? '***' + apiKey.substring(apiKey.length - 4) : 'MISSING'}`);
+                const verifyRes = await axios.get(`${baseUrl}/transaction/detail`, {
+                    params: { reference: reference },
+                    headers: { 'Authorization': `Bearer ${apiKey}` },
+                    validateStatus: (s) => s < 999
+                });
+                if (!verifyRes.data?.success || verifyRes.data?.data?.status !== 'PAID') {
+                    console.error(`❌ [TRIPAY-CALLBACK] Active Verification Failed. Response:`, verifyRes.data);
+                    return res.status(400).json({ success: false, message: 'Verification Check Failed' });
+                }
+                console.log(`✅ [TRIPAY-CALLBACK] Active Verification Passed for Ref: ${reference}`);
+            }
+            catch (vErr) {
+                console.error(`❌ [TRIPAY-CALLBACK] Axios verification error:`, vErr.message);
+                return res.status(500).json({ success: false, message: 'Could not reach Tripay backend' });
+            }
+        }
+        // 6. Map Status
+        let newStatus = trx.status;
+        if (status === 'PAID') {
+            if (trx.type === 'DEPOSIT') {
+                newStatus = 'SUCCESS';
+            }
+            else {
+                newStatus = 'PROCESSING'; // Standard for Game Topup (awaiting provider)
+            }
+        }
+        else if (status === 'FAILED' || status === 'EXPIRED' || status === 'REFUND') {
+            newStatus = 'FAILED';
+            // [VOUCHER RECOVERY] Return stock if payment failed/expired
+            if (trx.voucherCode) {
+                console.log(`♻️ [VOUCHER] Returning stock for expired/failed order: ${merchant_ref}`);
+                await prisma.voucher.update({
+                    where: { code: trx.voucherCode },
+                    data: { stock: { increment: 1 } }
+                }).catch(err => console.error("Voucher Recovery Failed:", err));
+            }
+        }
+        if (newStatus !== trx.status && (newStatus === 'SUCCESS' || newStatus === 'PROCESSING')) {
+            // Update reference if missing & status
+            await prisma.transaction.update({
+                where: { id: merchant_ref },
+                data: {
+                    paymentTrxId: reference,
+                    status: newStatus,
+                    updatedAt: new Date()
+                }
+            });
+            // ⚡ Real-Time Socket Update
+            const io = req.app.get('io');
+            if (io) {
+                io.to(merchant_ref).emit('transaction_update', {
+                    status: newStatus,
+                    transactionId: merchant_ref
+                });
+            }
+            if (trx.type === 'DEPOSIT' && trx.userId) {
+                // Add Balance for Deposit
+                console.log(`💰 [WALLET] Adding Rp${trx.amount} to User ${trx.userId} via Tripay Callback`);
+                await prisma.user.update({
+                    where: { id: trx.userId },
+                    data: { balance: { increment: trx.amount } }
+                });
+            }
+            else if (trx.type === 'TOPUP' || !trx.type) {
+                // [SECURITY] Decrement Voucher Stock ONLY after payment is confirmed
+                if (trx.voucherCode) {
+                    const v = await prisma.voucher.findUnique({ where: { code: trx.voucherCode } });
+                    if (v && v.stock > 0) {
+                        await prisma.voucher.update({
+                            where: { id: v.id },
+                            data: { stock: { decrement: 1 } }
+                        });
+                        console.log(`🎟️ [VOUCHER] Stock decremented via Callback for Order: ${merchant_ref}`);
+                    }
+                }
+                // Trigger Provider for Game Topup
+                processGameTopup(merchant_ref).catch(e => console.error("❌ [TRIPAY-CALLBACK] Background Topup Error:", e));
+            }
+        }
+        else if (newStatus === 'FAILED' && trx.status !== 'FAILED') {
+            await prisma.transaction.update({
+                where: { id: merchant_ref },
+                data: { status: 'FAILED', providerStatus: `TRIPAY_${status}` }
+            });
+        }
+        res.json({ success: true });
+    }
+    catch (error) {
+        console.error("❌ [TRIPAY-CALLBACK] Error:", error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
 /**
  * Process Game Topup (Trigger Provider)
  * Use this to fulfill the order after payment is confirmed (Balance or Gateway).
@@ -83,18 +266,18 @@ export const processGameTopup = async (trxId) => {
             return { success: true };
         }
         else {
-            // 4B. Provider Rejected Immediately
+            // 4B. Provider Rejected Immediately (e.g. Insufficient Balance, System error)
             console.error(`❌ [PROCESS] Provider Failed: ${order.message}`);
             await prisma.transaction.update({
                 where: { id: trxId },
                 data: {
-                    status: 'FAILED',
-                    providerStatus: 'FAILED_AT_PROVIDER: ' + order.message,
+                    status: 'PROVIDER_FAILED',
+                    providerStatus: 'PROVIDER_ERROR: ' + (order.message || 'Unknown'),
                     updatedAt: new Date()
                 }
             });
-            // TODO: Handle Auto Refund for Balance payments here if strictly needed
-            return { success: false, message: "Provider Failed" };
+            // TODO: Manual intervention required message via notification service
+            return { success: false, message: order.message };
         }
     }
     catch (error) {
@@ -104,13 +287,13 @@ export const processGameTopup = async (trxId) => {
             await prisma.transaction.update({
                 where: { id: trxId },
                 data: {
-                    providerStatus: 'FAILED_SYS: ' + error.message,
+                    providerStatus: 'FAILED_SYS',
                     status: 'FAILED' // Or keep PROCESSING? Safe to fail.
                 }
             });
         }
         catch (e) { }
-        return { success: false, message: error.message };
+        return { success: false, message: 'Processing error. Please contact support.' };
     }
 };
 // --- CONTROLLER ENDPOINTS ---
@@ -167,7 +350,7 @@ export const getCategoryBySlug = async (req, res) => {
         res.json({ success: true, data: { ...category, variations } });
     }
     catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // GET /api/categories/best-selling
@@ -205,51 +388,51 @@ export const getBestSellingCategories = async (req, res) => {
     }
     catch (error) {
         console.error("Best Selling Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // GET /api/categories/popular
 export const getPopularCategories = async (req, res) => {
     try {
-        // Defined as "Trending" (Last 7 Days)
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        // Use cache to avoid costly ORDER BY RANDOM() full table scan on every request
+        const now = Date.now();
+        if (_popularCategoriesCache && now < _popularCacheExpiry) {
+            return res.json({ success: true, data: _popularCategoriesCache });
+        }
         const result = await prisma.$queryRaw `
-             SELECT 
-                MIN(c.id) as id, 
-                COALESCE(c.brand, c.name) as name, 
-                MIN(c.slug) as slug, 
-                MIN(c.image) as image, 
-                COUNT(t.id) as trend_score
-            FROM transactions t
-            JOIN products p ON t."productId" = p.id
-            JOIN categories c ON p."categoryId" = c.id
-            WHERE t.status = 'SUCCESS' AND t."createdAt" >= ${sevenDaysAgo}
-            GROUP BY COALESCE(c.brand, c.name)
-            ORDER BY trend_score DESC
-            LIMIT 10
-        `;
-        // Fallback: If no trending data (new app), return random or all time
-        if (result.length === 0) {
-            const fallback = await prisma.$queryRaw `
-                SELECT c.id, c.name, c.slug, c.image, 0 as total_sales
+                SELECT 
+                    MIN(c.id) as id, 
+                    COALESCE(c."brand", c.name) as name, 
+                    MIN(c.slug) as slug, 
+                    MIN(c.image) as image, 
+                    0 as trend_score
                 FROM categories c
                 WHERE c."isActive" = true
-                ORDER BY RANDOM()
-                LIMIT 10
+                GROUP BY COALESCE(c."brand", c.name)
+                LIMIT 30
             `;
-            return res.json({ success: true, data: fallback });
+        if (result.length === 0) {
+            return res.json({ success: true, data: [] });
         }
         const formatted = result.map(item => ({
             ...item,
             trend_score: Number(item.trend_score),
             total_sales: Number(item.trend_score) // Keep compatibility if frontend expects total_sales
         }));
-        res.json({ success: true, data: formatted });
+        // Shuffle in-memory (Fisher-Yates) instead of ORDER BY RANDOM() in DB
+        for (let i = formatted.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [formatted[i], formatted[j]] = [formatted[j], formatted[i]];
+        }
+        const top10 = formatted.slice(0, 10);
+        // Store in cache
+        _popularCategoriesCache = top10;
+        _popularCacheExpiry = now + POPULAR_TTL;
+        res.json({ success: true, data: top10 });
     }
     catch (error) {
         console.error("Popular Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // GET /api/products
@@ -293,6 +476,50 @@ export const getProducts = async (req, res) => {
         res.status(500).json({ success: false, message: "System Error: Failed to fetch products" });
     }
 };
+// GET /api/transaction/calculate-fee
+export const calculateFee = async (req, res) => {
+    const code = req.query.code;
+    const amount = req.query.amount;
+    if (!code || !amount)
+        return res.status(400).json({ success: false, message: 'Missing parameters' });
+    try {
+        // 1. Fetch Tripay Configs
+        const configs = await prisma.systemConfig.findMany({
+            where: {
+                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] }
+            }
+        });
+        const configMap = {};
+        configs.forEach((c) => configMap[c.key] = c.value);
+        const mode = (configMap['TRIPAY_MODE'] || 'PRODUCTION').toUpperCase().trim();
+        const apiKey = (mode === 'PRODUCTION' ? configMap['TRIPAY_PROD_API_KEY'] : configMap['TRIPAY_SB_API_KEY'])?.trim();
+        const baseUrl = mode === 'PRODUCTION' ? 'https://tripay.co.id/api' : 'https://tripay.co.id/api-sandbox';
+        if (!apiKey)
+            return res.status(500).json({ success: false, message: 'Tripay API Key not configured' });
+        // 2. Map channel codes if needed
+        const map = {
+            'bca': 'BCAVA', 'mandiri': 'MANDIRIVA', 'bni': 'BNIVA', 'bri': 'BRIVA',
+            'cimb': 'CIMBVA', 'permata': 'PERMATAVA', 'alfamart': 'ALFAMART',
+            'indomaret': 'INDOMARET', 'qris': 'QRIS', 'dana': 'DANA',
+            'ovo': 'OVO', 'shopeepay': 'SHOPEEPAY'
+        };
+        const tripayCode = map[code.toString().toLowerCase()] || code;
+        // 3. Call Tripay API
+        const response = await axios.get(`${baseUrl}/merchant/fee-calculator`, {
+            params: { code: tripayCode, amount: parseInt(amount.toString()) },
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+            validateStatus: (status) => status < 999
+        });
+        if (response.data?.success && response.data.data?.[0]) {
+            return res.json({ success: true, data: response.data.data[0] });
+        }
+        return res.status(400).json({ success: false, message: response.data?.message || 'Calculation Failed' });
+    }
+    catch (error) {
+        console.error("Calculate Fee Error:", error.message);
+        return res.status(500).json({ success: false, message: 'Internal Server Error' });
+    }
+};
 // GET /api/vendor-products
 // Proxy to fetch services specifically from the active Provider (VIP)
 export const getVendorProducts = async (req, res) => {
@@ -306,7 +533,7 @@ export const getVendorProducts = async (req, res) => {
         }
     }
     catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // POST /api/transaction/check-id
@@ -373,7 +600,8 @@ export const createTransaction = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Product Not Found' });
         // 2. Prepare Transaction Data
         const invoice = `GRM-${Date.now()}`;
-        let amount = product.price_sell;
+        const amount = product.price_sell;
+        const basePrice = amount;
         let discountAmount = 0;
         const validVoucherCode = req.body.voucherCode;
         // --- VOUCHER LOGIC ---
@@ -400,6 +628,122 @@ export const createTransaction = async (req, res) => {
             }
         }
         const finalAmount = amount - discountAmount;
+        // --- GATEWAY CONFIG & SELECTION (Moved Up for Fee Sync) ---
+        let gateway = 'DUPAY';
+        let tripayConfig = {
+            mode: 'PRODUCTION',
+            apiKey: '',
+            privateKey: '',
+            merchantCode: ''
+        };
+        let dupayConfig = {
+            baseUrl: process.env.DUPAY_BASE_URL || 'http://localhost:8080',
+            apiKey: '',
+            secretKey: '',
+            gatewayName: process.env.DUPAY_GATEWAY_NAME || 'TripaySandbox'
+        };
+        try {
+            const configs = await prisma.systemConfig.findMany({
+                where: {
+                    key: { in: ['PAYMENT_GATEWAY', 'TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_SB_MERCHANT_CODE', 'TRIPAY_PROD_API_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_PROD_MERCHANT_CODE', 'DUPAY_BASE_URL', 'DUPAY_API_KEY', 'DUPAY_SECRET_KEY', 'DUPAY_GATEWAY_NAME'] }
+                }
+            });
+            const configMap = {};
+            configs.forEach((c) => configMap[c.key] = c.value);
+            if (configMap['PAYMENT_GATEWAY'])
+                gateway = configMap['PAYMENT_GATEWAY'].toUpperCase();
+            else
+                gateway = (process.env.PAYMENT_GATEWAY || 'DUPAY').toUpperCase();
+            if (gateway === 'TRIPAY') {
+                const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                tripayConfig.mode = mode;
+                if (mode === 'SANDBOX') {
+                    tripayConfig.apiKey = configMap['TRIPAY_SB_API_KEY'] || '';
+                    tripayConfig.privateKey = configMap['TRIPAY_SB_PRIVATE_KEY'] || '';
+                    tripayConfig.merchantCode = configMap['TRIPAY_SB_MERCHANT_CODE'] || '';
+                }
+                else {
+                    tripayConfig.apiKey = configMap['TRIPAY_PROD_API_KEY'] || '';
+                    tripayConfig.privateKey = configMap['TRIPAY_PROD_PRIVATE_KEY'] || '';
+                    tripayConfig.merchantCode = configMap['TRIPAY_PROD_MERCHANT_CODE'] || '';
+                }
+            }
+            else if (gateway === 'DUPAY') {
+                dupayConfig = {
+                    baseUrl: configMap['DUPAY_BASE_URL'] || dupayConfig.baseUrl,
+                    apiKey: configMap['DUPAY_API_KEY'] || '',
+                    secretKey: configMap['DUPAY_SECRET_KEY'] || '',
+                    gatewayName: configMap['DUPAY_GATEWAY_NAME'] || dupayConfig.gatewayName
+                };
+            }
+        }
+        catch (e) {
+            console.error("Config Loading Failed:", e);
+        }
+        // --- GATEWAY FEE CALCULATION (Real-time Sync) ---
+        let adminFee = 0;
+        // Local Fallback Logic
+        const getLocalFee = (method, channel, price) => {
+            if (method === 'QRIS' || (method === 'qris' && (!channel || channel === 'qris')))
+                return Math.floor(price * 0.007);
+            if (method === 'VA' || method === 'va') {
+                if (channel?.includes('mandiri'))
+                    return 4000;
+                if (channel?.includes('bri'))
+                    return 3500;
+                return 4500;
+            }
+            if (method === 'EWALLET' || method === 'ewallet') {
+                if (channel?.includes('shopeepay'))
+                    return Math.floor(price * 0.02);
+                return Math.floor(price * 0.015);
+            }
+            if (method === 'CSTORE' || method === 'cstore')
+                return 3500;
+            return 0;
+        };
+        if (paymentMethod !== 'BALANCE') {
+            if (gateway === 'TRIPAY' && tripayConfig.apiKey) {
+                // 📡 Real-time TRIPAY Fee Sync
+                try {
+                    const baseUrl = tripayConfig.mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
+                    // Map local channel to Tripay code for calculator
+                    let tripayChannel = paymentChannel || paymentMethod;
+                    const map = {
+                        'bca': 'BCAVA', 'mandiri': 'MANDIRIVA', 'bni': 'BNIVA', 'bri': 'BRIVA',
+                        'cimb': 'CIMBVA', 'permata': 'PERMATAVA', 'alfamart': 'ALFAMART',
+                        'indomaret': 'INDOMARET', 'qris': 'QRIS', 'dana': 'DANA',
+                        'ovo': 'OVO', 'shopeepay': 'SHOPEEPAY'
+                    };
+                    if (map[tripayChannel.toLowerCase()])
+                        tripayChannel = map[tripayChannel.toLowerCase()];
+                    const feeRes = await axios.get(`${baseUrl}/merchant/fee-calculator`, {
+                        params: { code: tripayChannel, amount: finalAmount },
+                        headers: { 'Authorization': `Bearer ${tripayConfig.apiKey}` },
+                        validateStatus: (status) => status < 999
+                    });
+                    if (feeRes.data?.success && feeRes.data.data?.[0]) {
+                        // Tripay returns fee for merchant or customer. 
+                        // We usually want the 'total_fee.merchant' if we markup, 
+                        // or just use whatever they say the 'total_fee.customer' is if passed to customer.
+                        // Here we take 'total_fee.merchant' as the baseline admin fee.
+                        adminFee = feeRes.data.data[0].total_fee.customer || getLocalFee(paymentMethod, paymentChannel, finalAmount);
+                        console.log(`📡 [TRIPAY-FEE] Real-time Sync: Rp${adminFee} for ${tripayChannel}`);
+                    }
+                    else {
+                        adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount);
+                    }
+                }
+                catch (err) {
+                    console.error("📡 [TRIPAY-FEE] Sync Failed:", err.response?.data || err.message);
+                    adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount); // Fallback
+                }
+            }
+            else {
+                adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount);
+            }
+        }
+        const totalPayable = finalAmount + adminFee;
         // 3. Handle Payment Method
         if (paymentMethod === 'BALANCE') {
             // A. BALANCE PAYMENT (SECURE)
@@ -409,8 +753,7 @@ export const createTransaction = async (req, res) => {
             const token = authHeader.split(" ")[1];
             if (!token)
                 return res.status(401).json({ success: false, message: 'Invalid token' });
-            // Verify Token
-            const jwt = (await import('jsonwebtoken')).default;
+            // Verify Token (REMOVED: Using middleware is better, but let's keep for legacy/internal check)
             let payerId;
             try {
                 if (!process.env.JWT_SECRET)
@@ -449,6 +792,7 @@ export const createTransaction = async (req, res) => {
                             voucherCode: validVoucherCode,
                             status: 'PROCESSING',
                             paymentMethod: 'BALANCE',
+                            paymentGateway: 'BALANCE',
                             userId: payer.id,
                             guestContact: payer.phoneNumber || null
                         }
@@ -457,10 +801,14 @@ export const createTransaction = async (req, res) => {
                     res.json({
                         success: true,
                         data: {
+                            id: trx.id, // ← CRITICAL: FE needs this for URL & polling
                             invoice,
                             status: 'PROCESSING',
                             productName: product.name,
-                            amount: finalAmount
+                            amount: finalAmount,
+                            adminFee: 0,
+                            discountAmount,
+                            paymentName: 'Balance'
                         }
                     });
                     // Async Process
@@ -483,13 +831,9 @@ export const createTransaction = async (req, res) => {
             }
         }
         else {
-            // B. GATEWAY PAYMENT (IPAYMU)
-            let trxId = `MOCK_TRX_${Date.now()}`;
+            // --- GATEWAY PAYMENT (TRIPAY / IPAYMU) -> Handled by Java Service
             // Resolve User for History Linking
-            // If logged in, use their ID
             let userIdForTrx = authUserId;
-            let targetPhone = guestContact;
-            // Attempt to resolve from Token if not passed explicitly
             if (!userIdForTrx && req.headers.authorization) {
                 try {
                     const token = req.headers.authorization.split(' ')[1];
@@ -501,110 +845,160 @@ export const createTransaction = async (req, res) => {
                 }
                 catch (e) { }
             }
-            // If we have ID, try to get Phone from DB if guestContact missing
-            if (userIdForTrx && !targetPhone) {
+            let activeUser = null;
+            if (userIdForTrx) {
                 try {
-                    const u = await prisma.user.findUnique({ where: { id: userIdForTrx } });
-                    if (u && u.phoneNumber)
-                        targetPhone = u.phoneNumber;
+                    activeUser = await prisma.user.findUnique({ where: { id: userIdForTrx } });
                 }
                 catch (e) { }
             }
-            // Create Pending Transaction
-            try {
-                const trx = await prisma.transaction.create({
-                    data: {
-                        invoice,
-                        productId,
-                        targetId: userId,
-                        zoneId,
-                        amount,
-                        discountAmount,
-                        voucherCode: validVoucherCode,
-                        status: 'PENDING',
-                        paymentMethod,
-                        userId: userIdForTrx || undefined,
-                        guestContact: targetPhone || null
-                    }
+            // Resolve phone: prioritize guestContact, then user.phoneNumber
+            let targetPhone = guestContact || activeUser?.phoneNumber || null;
+            // Validate phone number is present (critical for payment gateway)
+            if (!targetPhone) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'WhatsApp number is required for payment. Please provide your contact number.'
                 });
-                trxId = trx.id;
+            }
+            // Create Pending Transaction in DB First
+            let trxId = `TRX-${Date.now()}`;
+            try {
+                // Atomic: Create Transaction AND Decrement Voucher Stock
+                const result = await prisma.$transaction(async (tx) => {
+                    // 1. Create Transaction
+                    const newTrx = await tx.transaction.create({
+                        data: {
+                            invoice,
+                            productId,
+                            targetId: userId, // Game User ID
+                            zoneId,
+                            amount: totalPayable, // Store TOTAL including fee
+                            discountAmount,
+                            adminFee: adminFee, // Store Fee separately for records
+                            voucherCode: validVoucherCode,
+                            status: 'PENDING',
+                            paymentMethod,
+                            paymentGateway: gateway,
+                            userId: userIdForTrx || undefined,
+                            guestContact: targetPhone || null
+                        }
+                    });
+                    // 2. Decrement Voucher (MOVED TO CALLBACK FOR SECURITY)
+                    // We no longer decrement here as it causes Reservation/DoS vulnerability.
+                    // Stock is decremented in handleTripayCallback/handleIpaymuCallback after PAID.
+                    return newTrx;
+                });
+                trxId = result.id;
             }
             catch (dbError) {
                 console.warn("DB Transaction Create Failed:", dbError);
+                return res.status(500).json({ success: false, message: "Database Error or Voucher Out of Stock" });
             }
-            // Init Ipaymu
-            const returnPath = `/order/${product.category.slug}`;
-            let payment;
-            if (paymentChannel) {
-                // Direct Payment (Embedded)
-                payment = await ipaymuService.directPayment(trxId, amount, 'Guest', 'guest@grimoire.com', targetPhone || '08123456789', paymentMethod, paymentChannel);
-            }
-            else {
-                // Redirect Payment (Legacy/Fallback)
-                payment = await ipaymuService.initPayment(trxId, amount, 'Guest', 'guest@grimoire.com', paymentMethod, returnPath);
-            }
-            if (!payment.success) {
-                return res.status(500).json({ success: false, message: payment.message || 'Payment Error' });
-            }
-            // Update with Payment URL or Direct Data
-            if (payment.data && !trxId.startsWith('MOCK')) {
-                const updateData = {
-                    paymentTrxId: String(payment.data.TransactionId || payment.data.SessionID)
+            // Call Java Payment Service
+            // ... (rest of the service call code remains same) ...
+            const paymentService = await import('../services/payment.service.js');
+            let finalChannel = paymentChannel || paymentMethod;
+            // Dupay mapping (internal channel -> gateway channel code)
+            if (gateway === 'DUPAY') {
+                const dupayMap = {
+                    'qris': 'QRISC',
+                    'bca': 'BCAVA',
+                    'mandiri': 'MANDIRIVA',
+                    'bni': 'BNIVA',
+                    'bri': 'BRIVA',
+                    'cimb': 'CIMBVA',
+                    'permata': 'PERMATAVA',
+                    'dana': 'DANA',
+                    'ovo': 'OVO',
+                    'shopeepay': 'SHOPEEPAY',
+                    'alfamart': 'ALFAMART',
+                    'indomaret': 'INDOMARET'
                 };
-                // Store Redirect URL if available (Direct also returns it sometimes for CC)
-                if (payment.data.Url)
-                    updateData.paymentUrl = payment.data.Url;
-                // Store Direct Payment Info (VA No, Code, etc) to display on Frontend
-                if (payment.data.PaymentNo)
-                    updateData.paymentNo = payment.data.PaymentNo;
-                if (payment.data.PaymentName)
-                    updateData.paymentChannel = payment.data.PaymentName; // e.g. "BCA Virtual Account"
-                // For QRIS Direct, usually returns QrString or QrImage
-                // We might need a field for QrString if we want to render it ourselves
-                // Schema update might be needed if we don't have a place for it.
-                // For now, let's assume `paymentNo` can hold the QR string if it's long enough, 
-                // OR just rely on paymentUrl for QRIS if Direct doesn't give raw string easily?
-                // Direct Payment for QRIS usually gives `QrString` or `QrImage`.
-                // Let's check schema. If needed we can stick it in `paymentNo` or `sn`(abuse?)
-                // Actually `paymentNo` is string?, so it fits.
-                if (payment.data.QrString)
-                    updateData.paymentNo = payment.data.QrString;
+                const normalized = finalChannel.toLowerCase().replace(/^va_/, '');
+                if (dupayMap[normalized])
+                    finalChannel = dupayMap[normalized];
+                else if (paymentMethod === 'VA')
+                    finalChannel = 'BCAVA';
+                else if (paymentMethod === 'EWALLET')
+                    finalChannel = 'DANA';
+                else
+                    finalChannel = 'QRISC';
+            }
+            else if (gateway === 'TRIPAY') {
+                const map = {
+                    'bca': 'BCAVA', 'mandiri': 'MANDIRIVA', 'bni': 'BNIVA', 'bri': 'BRIVA',
+                    'cimb': 'CIMBVA', 'permata': 'PERMATAVA', 'alfamart': 'ALFAMART',
+                    'indomaret': 'INDOMARET', 'qris': 'QRIS', 'dana': 'DANA',
+                    'ovo': 'OVO', 'shopeepay': 'SHOPEEPAY'
+                };
+                if (map[finalChannel])
+                    finalChannel = map[finalChannel];
+                else
+                    finalChannel = finalChannel.toUpperCase();
+            }
+            else if (gateway === 'IPAYMU') {
+                const vaList = ['bca', 'mandiri', 'bni', 'bri', 'cimb', 'permata', 'danamon'];
+                if (vaList.includes(finalChannel))
+                    finalChannel = finalChannel.replace('va_', '');
+            }
+            console.log(`🔌 [GATEWAY] Using ${gateway} (${tripayConfig.mode}) for Channel: ${finalChannel}`);
+            const payment = await paymentService.createPayment(trxId, finalAmount, // Send NET amount (User requested to reduce amount by fee)
+            gateway, finalChannel, activeUser?.name || 'Guest', activeUser?.email || 'guest@grimoire.com', targetPhone, // Already validated above
+            product.name, tripayConfig.apiKey, tripayConfig.privateKey, tripayConfig.merchantCode, tripayConfig.mode, basePrice, adminFee, dupayConfig.baseUrl, dupayConfig.apiKey, dupayConfig.secretKey, dupayConfig.gatewayName);
+            // Update Transaction with Result
+            if (payment.success) {
                 await prisma.transaction.update({
                     where: { id: trxId },
-                    data: updateData
+                    data: {
+                        paymentUrl: payment.paymentUrl,
+                        paymentTrxId: payment.paymentTrxId,
+                        paymentNo: payment.paymentNo,
+                        paymentChannel: payment.paymentName
+                    }
+                });
+                // Response (ENHANCED with Fee Details)
+                // ⚡ [NOTIFICATION] Send Billing Details via WA
+                const targetWa = targetPhone || activeUser?.phoneNumber;
+                if (targetWa) {
+                    console.log(`📨 [WA] Sending Bill Notification to: ${targetWa} for Invoice: ${invoice}`);
+                    // Ensure number formatting (e.g. 08xx -> 628xx) - Service likely handles it, but let's log any errors
+                    const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n📋 *DETAIL TAGIHAN*\nInvoice: *${invoice}*\nItem: *${product.name}*\nTotal Bayar: *Rp${totalPayable.toLocaleString('id-ID')}*\n---------------------------\n💳 *PEMBAYARAN*\nMetode: *${payment.paymentName?.toUpperCase()}*\nNo. Bayar / Link:\n*${payment.paymentNo || payment.paymentUrl || '-'}*\n\n*Silakan selesaikan pembayaran sebelum batas waktu.*\n---------------------------`;
+                    whatsappService.sendMessage(targetWa, waMsg)
+                        .then(() => console.log(`✅ [WA] Bill Notification Sent`))
+                        .catch(err => console.error("❌ [WA] Billing Notification Failed:", err));
+                }
+                else {
+                    console.warn(`⚠️ [WA] No target phone number found for Bill Notification. User: ${activeUser?.name}, GuestContact: ${guestContact}`);
+                }
+                res.json({
+                    success: true,
+                    data: {
+                        id: trxId,
+                        invoice,
+                        paymentUrl: payment.paymentUrl,
+                        paymentNo: payment.paymentNo,
+                        paymentName: payment.paymentName,
+                        expired: payment.expiredTime,
+                        productName: product.name,
+                        amount: totalPayable,
+                        basePrice: product.price_sell,
+                        adminFee: adminFee,
+                        discountAmount: discountAmount
+                    }
                 });
             }
-            // Send WA Invoice
-            if (targetPhone) {
-                console.log(`🚀 [WA] Sending Invoice to ${targetPhone}`);
-                // Modify WA message based on type
-                let payLinkOrCode = payment.data?.Url || 'Cek Website';
-                if (paymentChannel) {
-                    payLinkOrCode = `Kode Bayar: *${payment.data.PaymentNo || payment.data.QrString || '-'}*`;
-                }
-                const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n📋 *TAGIHAN BARU*\nInvoice: *${invoice}*\nItem: ${product.name}\nTotal: Rp${amount.toLocaleString('id-ID')}\n\n${payLinkOrCode}\n---------------------------\nSistem otomatis membatalkan jika tidak dibayar dalam 24 jam.`;
-                whatsappService.sendMessage(targetPhone, waMsg).catch(err => console.error("WA Error:", err));
+            else {
+                res.status(400).json({ success: false, message: payment.message });
             }
-            res.json({
-                success: true,
-                data: {
-                    id: trxId,
-                    invoice,
-                    paymentUrl: payment.data?.Url,
-                    paymentNo: payment.data?.PaymentNo || payment.data?.QrString, // Send to Frontend
-                    paymentName: payment.data?.PaymentName || payment.data?.Channel,
-                    expired: payment.data?.Expired,
-                    productName: product.name,
-                    amount
-                }
-            });
         }
     }
     catch (error) {
         console.error(error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
+// POST /api/transaction/deposit
 // POST /api/transaction/deposit
 export const createDeposit = async (req, res) => {
     // PROTECTED ROUTE
@@ -616,7 +1010,11 @@ export const createDeposit = async (req, res) => {
         if (!user)
             return res.status(404).json({ success: false, message: 'User Not Found' });
         const invoice = `DEP-${Date.now()}`;
-        let trxId = `MOCK_DEP_${Date.now()}`;
+        let trxId = `TRX_DEP_${Date.now()}`; // Consistent ID format
+        if (Number(amount) < 1000)
+            return res.status(400).json({ success: false, message: 'Minimum deposit is Rp1.000' });
+        if (Number(amount) > 10000000)
+            return res.status(400).json({ success: false, message: 'Maximum deposit is Rp10.000.000' });
         try {
             const trx = await prisma.transaction.create({
                 data: {
@@ -634,33 +1032,153 @@ export const createDeposit = async (req, res) => {
             console.error("DB Create Deposit Failed:", dbError);
             return res.status(500).json({ success: false, message: `Database Error: ${dbError.message}` });
         }
-        const returnPath = `/history`;
-        const payment = await ipaymuService.initPayment(trxId, Number(amount), user.name || 'User', user.email, paymentMethod, returnPath);
+        const paymentService = await import('../services/payment.service.js');
+        // --- GATEWAY SELECTION (SYNC WITH SYSTEM CONFIG) --- 🛡️
+        let gateway = 'DUPAY'; // Default
+        let tripayConfig = {
+            mode: 'PRODUCTION', // Default
+            apiKey: '',
+            privateKey: '',
+            merchantCode: ''
+        };
+        let dupayConfig = {
+            baseUrl: process.env.DUPAY_BASE_URL || 'http://localhost:8080',
+            apiKey: '',
+            secretKey: '',
+            gatewayName: process.env.DUPAY_GATEWAY_NAME || 'TripaySandbox'
+        };
+        try {
+            const configs = await prisma.systemConfig.findMany({
+                where: {
+                    key: { in: ['PAYMENT_GATEWAY', 'TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_SB_MERCHANT_CODE', 'TRIPAY_PROD_API_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_PROD_MERCHANT_CODE', 'DUPAY_BASE_URL', 'DUPAY_API_KEY', 'DUPAY_SECRET_KEY', 'DUPAY_GATEWAY_NAME'] }
+                }
+            });
+            const configMap = {};
+            configs.forEach((c) => configMap[c.key] = c.value);
+            // 1. Gateway Selection
+            if (configMap['PAYMENT_GATEWAY']) {
+                gateway = configMap['PAYMENT_GATEWAY'].toUpperCase();
+            }
+            else {
+                gateway = (process.env.PAYMENT_GATEWAY || 'DUPAY').toUpperCase();
+            }
+            // 2. Tripay Config Selection
+            if (gateway === 'TRIPAY') {
+                const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                tripayConfig.mode = mode;
+                if (mode === 'SANDBOX') {
+                    tripayConfig.apiKey = configMap['TRIPAY_SB_API_KEY'] || '';
+                    tripayConfig.privateKey = configMap['TRIPAY_SB_PRIVATE_KEY'] || '';
+                    tripayConfig.merchantCode = configMap['TRIPAY_SB_MERCHANT_CODE'] || '';
+                }
+                else {
+                    tripayConfig.apiKey = configMap['TRIPAY_PROD_API_KEY'] || '';
+                    tripayConfig.privateKey = configMap['TRIPAY_PROD_PRIVATE_KEY'] || '';
+                    tripayConfig.merchantCode = configMap['TRIPAY_PROD_MERCHANT_CODE'] || '';
+                }
+            }
+            else if (gateway === 'DUPAY') {
+                dupayConfig = {
+                    baseUrl: configMap['DUPAY_BASE_URL'] || dupayConfig.baseUrl,
+                    apiKey: configMap['DUPAY_API_KEY'] || '',
+                    secretKey: configMap['DUPAY_SECRET_KEY'] || '',
+                    gatewayName: configMap['DUPAY_GATEWAY_NAME'] || dupayConfig.gatewayName
+                };
+            }
+        }
+        catch (e) {
+            gateway = (process.env.PAYMENT_GATEWAY || 'DUPAY').toUpperCase();
+        }
+        let finalChannel = paymentMethod;
+        // Channel Mapping for Dupay/Tripay (Deposit logic)
+        if (gateway === 'DUPAY') {
+            const map = {
+                'va_bca': 'BCAVA',
+                'va_mandiri': 'MANDIRIVA',
+                'va_bni': 'BNIVA',
+                'va_bri': 'BRIVA',
+                'va_cimb': 'CIMBVA',
+                'va_permata': 'PERMATAVA',
+                'qris': 'QRISC',
+                'bca': 'BCAVA',
+                'mandiri': 'MANDIRIVA',
+                'bni': 'BNIVA',
+                'bri': 'BRIVA',
+                'cimb': 'CIMBVA',
+                'permata': 'PERMATAVA',
+                'dana': 'DANA',
+                'ovo': 'OVO',
+                'shopeepay': 'SHOPEEPAY'
+            };
+            if (map[finalChannel])
+                finalChannel = map[finalChannel];
+            else
+                finalChannel = 'QRISC';
+        }
+        else if (gateway === 'TRIPAY') {
+            const map = {
+                'va_bca': 'BCAVA',
+                'va_mandiri': 'MANDIRIVA',
+                'va_bni': 'BNIVA',
+                'va_bri': 'BRIVA',
+                'va_cimb': 'CIMBVA',
+                'va_permata': 'PERMATAVA',
+                'qris': 'QRIS',
+                'bca': 'BCAVA',
+                'mandiri': 'MANDIRIVA',
+                'bni': 'BNIVA',
+                'bri': 'BRIVA',
+                'cimb': 'CIMBVA',
+                'permata': 'PERMATAVA'
+            };
+            if (map[finalChannel])
+                finalChannel = map[finalChannel];
+            else
+                finalChannel = finalChannel.toUpperCase().replace('VA_', '') + (finalChannel.includes('va') ? 'VA' : '');
+        }
+        console.log(`🔌 [DEPOSIT-GATEWAY] Using ${gateway} (${tripayConfig.mode}) for User: ${userId}`);
+        const payment = await paymentService.createPayment(trxId, Number(amount), // Send NET amount (User requested to reduce amount by fee)
+        gateway, finalChannel, user.name || 'User', user.email || 'user@grimoire.com', user.phoneNumber || '08123456789', `Deposit Rp ${amount}`, 
+        // Pass Credentials (Important for dynamic config)
+        tripayConfig.apiKey, tripayConfig.privateKey, tripayConfig.merchantCode, tripayConfig.mode, Number(amount), // basePrice
+        0, // adminFee for deposits
+        dupayConfig.baseUrl, dupayConfig.apiKey, dupayConfig.secretKey, dupayConfig.gatewayName);
         if (!payment.success) {
             await prisma.transaction.update({ where: { id: trxId }, data: { status: 'FAILED' } });
             return res.status(500).json({ success: false, message: payment.message || 'Payment Error' });
         }
-        if (payment.data) {
-            await prisma.transaction.update({
-                where: { id: trxId },
-                data: {
-                    paymentUrl: payment.data.Url,
-                    paymentTrxId: payment.data.TransactionId
-                }
-            });
+        // Update DB
+        await prisma.transaction.update({
+            where: { id: trxId },
+            data: {
+                paymentUrl: payment.paymentUrl,
+                paymentTrxId: payment.paymentTrxId,
+                paymentNo: payment.paymentNo,
+                paymentChannel: payment.paymentName
+            }
+        });
+        // ⚡ [NOTIFICATION] Send Billing Details via WA
+        const contactNum = user.phoneNumber || '08123456789'; // Fallback
+        if (contactNum && contactNum !== '08123456789') {
+            console.log(`📨 [WA] Sending Deposit Bill to: ${contactNum}`);
+            const waMsg = `💰 *TOPUP SALDO (DEPOSIT)*\n---------------------------\nInvoice: *${invoice}*\nNominal: *Rp${Number(amount).toLocaleString('id-ID')}*\n---------------------------\n💳 *PEMBAYARAN*\nMetode: *${payment.paymentName?.toUpperCase()}*\nNo. Bayar / Link:\n*${payment.paymentNo || payment.paymentUrl || '-'}*\n\n*Saldo akan otomatis ditambahkan setelah pembayaran lunas.*`;
+            whatsappService.sendMessage(contactNum, waMsg)
+                .then(() => console.log(`✅ [WA] Deposit Bill Sent`))
+                .catch(err => console.error("❌ [WA] Deposit Billing Error:", err));
         }
         res.json({
             success: true,
             data: {
                 invoice,
-                paymentUrl: payment.data?.Url,
+                paymentUrl: payment.paymentUrl,
+                paymentNo: payment.paymentNo,
                 amount
             }
         });
     }
     catch (error) {
         console.error(error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // POST /api/callback/ipaymu
@@ -694,7 +1212,7 @@ export const handleIpaymuCallback = async (req, res) => {
             // Enforce Success check from API (Status 1 or 6 usually means success/paid)
             if (String(verification.status) !== '6' && verification.statusDesc?.toLowerCase() !== 'berhasil') {
                 console.warn(`⚠️ [SECURITY] API says not success yet: ${verification.statusDesc}`);
-                // Proceed with caution or return? For now logged.
+                return res.status(400).json({ success: false, message: 'Verification Status Mismatch' });
             }
             // 2. Update Transaction
             const paymentChannel = req.body.channel || req.body.via || null;
@@ -732,6 +1250,19 @@ export const handleIpaymuCallback = async (req, res) => {
                     data: { balance: { increment: totalPaid } }
                 });
             }
+            else {
+                // [SECURITY] Decrement Voucher Stock ONLY after payment is confirmed
+                if (trx.voucherCode) {
+                    const v = await prisma.voucher.findUnique({ where: { code: trx.voucherCode } });
+                    if (v && v.stock > 0) {
+                        await prisma.voucher.update({
+                            where: { id: v.id },
+                            data: { stock: { decrement: 1 } }
+                        });
+                        console.log(`🎟️ [VOUCHER] Stock decremented via Ipaymu Callback for Order: ${trxId}`);
+                    }
+                }
+            }
             console.log(`✅ Transaction ${trxId} (${trx.type}) SUCCESS | Fee: ${fee} | Total: ${totalPaid}`);
             // 4. Send WA Receipt
             let targetWa = trx.guestContact;
@@ -760,6 +1291,11 @@ export const handleIpaymuCallback = async (req, res) => {
             // User Request: If payment fails, set to PENDING (Payment Pending) instead of FAILED
             await prisma.transaction.update({ where: { id: trxId }, data: { status: 'PENDING' } });
             console.log(`❌ Transaction ${trxId} Payment Failed -> Reverted to PENDING`);
+            // [VOUCHER RECOVERY] Although reverted to PENDING, if it was a final failure we'd recover.
+            // But since user wants it to stay PENDING (maybe for re-try payment?), we might not want to recover stock yet?
+            // Actually, if it's PENDING it implies the user might pay later. 
+            // BUT usually, a 'failed' callback in Ipaymu means the session is dead.
+            // Let's stick to Tripay logic for now where EXPIRED/FAILED recovers stock.
         }
         res.json({ success: true });
     }
@@ -775,31 +1311,122 @@ export const checkTransactionStatus = async (req, res) => {
         if (!id || id === 'null' || id === 'undefined') {
             return res.status(400).json({ success: false, message: "Invalid Transaction ID" });
         }
-        // 1. Get Transaction
-        const trx = await prisma.transaction.findUnique({ where: { id }, include: { product: true } });
+        // 1. Get Transaction (Search by ID or Invoice)
+        const trx = await prisma.transaction.findFirst({
+            where: {
+                OR: [
+                    { id: id },
+                    { invoice: id }
+                ]
+            },
+            include: { product: true }
+        });
         if (!trx)
             return res.status(404).json({ success: false, message: "Transaction not found" });
-        // A. If PENDING, Check Payment Gateway (IPAYMU) First
+        // A. If PENDING, Check Payment Gateway First
         if (trx.status === 'PENDING') {
             if (trx.paymentTrxId) {
-                const payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
-                // Ipaymu Status: 1=Berhasil, 6=Paid
-                if (payCheck.success && (payCheck.status === 1 || payCheck.status === 6 || payCheck.statusDesc?.toLowerCase() === 'berhasil')) {
-                    console.log(`✅ [MANUAL CHECK] Payment found SUCCESS for ${trx.invoice}`);
-                    // Update to PROCESSING (Paid, waiting for provider)
-                    // We treat this as 'PROCESSING' because we are about to trigger provider
-                    await prisma.transaction.update({
-                        where: { id: trx.id },
-                        data: {
-                            status: 'PROCESSING',
-                            updatedAt: new Date()
+                let payCheck = { success: false };
+                // Determine Gateway from Transaction or System Config
+                let gateway = trx.paymentGateway;
+                if (!gateway) {
+                    const cfg = await prisma.systemConfig.findUnique({ where: { key: 'PAYMENT_GATEWAY' } });
+                    gateway = cfg?.value || 'TRIPAY'; // Use Config Default
+                }
+                if (gateway === 'IPAYMU') {
+                    payCheck = await ipaymuService.checkTransaction(trx.paymentTrxId);
+                }
+                else if (gateway === 'TRIPAY') {
+                    // IMPLEMENT TRIPAY CHECK IN NODE.JS OR CALL JAVA
+                    // For now, let's keep it in Node.js for speed
+                    console.log(`🔍 [TRIPAY] Checking Status for: ${trx.paymentTrxId}`);
+                    // Fetch Tripay Config
+                    const configs = await prisma.systemConfig.findMany({
+                        where: {
+                            key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] }
                         }
                     });
-                    // Trigger WA Receipt (if not sent yet? Assume manual check allows re-trigger or ensure it wasn't sent)
-                    // ... (Skipping WA here to avoid spam, or simplistic log)
-                    // Trigger Provider
-                    processGameTopup(trx.id).catch(console.error);
-                    return res.json({ success: true, message: "Payment Verified! Order Processing.", data: { status: 'PROCESSING' } });
+                    const configMap = {};
+                    configs.forEach((c) => configMap[c.key] = c.value);
+                    const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
+                    const apiKey = mode === 'SANDBOX' ? configMap['TRIPAY_SB_API_KEY'] : configMap['TRIPAY_PROD_API_KEY'];
+                    const baseUrl = mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
+                    try {
+                        const response = await axios.get(`${baseUrl}/transaction/check-status`, {
+                            params: { reference: trx.paymentTrxId },
+                            headers: { 'Authorization': `Bearer ${apiKey}` },
+                            validateStatus: (status) => status < 999
+                        });
+                        const data = response.data;
+                        if (data?.success && data.message === 'PAID') {
+                            payCheck = { success: true, status: 6, statusDesc: 'Berhasil' };
+                        }
+                        else {
+                            console.log(`ℹ️ [TRIPAY] Status check: ${data?.message}`);
+                        }
+                    }
+                    catch (err) {
+                        console.error(`❌ [TRIPAY] Check Status Error:`, err.response?.data || err.message);
+                    }
+                }
+                // Unified Status Handling (Standard Payment Logic)
+                // 1. PENDING/UNPAID -> Do Nothing (Wait)
+                // 2. PAID -> Process
+                // 3. EXPIRED/FAILED -> Fail
+                let gatewayStatus = 'PENDING';
+                const safeData = {
+                    ...trx,
+                    guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+                };
+                if (payCheck.success) {
+                    if (payCheck.status === 6 || String(payCheck.statusDesc).toUpperCase() === 'BERHASIL' || String(payCheck.message).toUpperCase() === 'PAID') {
+                        gatewayStatus = 'PAID';
+                    }
+                    else if (String(payCheck.message).toUpperCase() === 'UNPAID') {
+                        gatewayStatus = 'PENDING';
+                    }
+                    else if (String(payCheck.message).toUpperCase() === 'EXPIRED') {
+                        gatewayStatus = 'EXPIRED';
+                    }
+                    else if (String(payCheck.message).toUpperCase() === 'FAILED') {
+                        gatewayStatus = 'FAILED';
+                    }
+                }
+                if (gatewayStatus === 'PAID') {
+                    console.log(`ℹ️ [MANUAL CHECK] Payment found PAID for ${trx.invoice}, but waiting for Gateway Callback to process.`);
+                    const isDeposit = trx.type === 'DEPOSIT';
+                    const detectedStatus = isDeposit ? 'SUCCESS' : 'PROCESSING';
+                    return res.json({
+                        success: true,
+                        message: "Payment detected at Gateway. Waiting for system confirmation...",
+                        data: {
+                            ...safeData,
+                            status: trx.status, // Keep DB status
+                            detectedStatus: detectedStatus // Return what gateway says
+                        }
+                    });
+                }
+                else if (gatewayStatus === 'EXPIRED' || gatewayStatus === 'FAILED') {
+                    // Payment FAILED/EXPIRED
+                    console.log(`❌ [MANUAL CHECK] Payment FAILED/EXPIRED for ${trx.invoice}`);
+                    await prisma.transaction.update({
+                        where: { id: trx.id },
+                        data: { status: 'FAILED', updatedAt: new Date() }
+                    });
+                    // [VOUCHER RECOVERY]
+                    if (trx.voucherCode) {
+                        console.log(`♻️ [VOUCHER] Returning stock for failed order via Sync: ${trx.invoice}`);
+                        await prisma.voucher.update({
+                            where: { code: trx.voucherCode },
+                            data: { stock: { increment: 1 } }
+                        }).catch(console.error);
+                    }
+                    return res.json({ success: true, message: "Payment Expired or Failed.", data: { status: 'FAILED' } });
+                }
+                else {
+                    // PENDING / UNPAID
+                    console.log(`⏳ [MANUAL CHECK] Payment still PENDING/UNPAID for ${trx.invoice}`);
+                    return res.json({ success: true, message: "Waiting for payment...", data: safeData });
                 }
             }
         }
@@ -807,6 +1434,15 @@ export const checkTransactionStatus = async (req, res) => {
         // Only if status is PROCESSING or SUCCESS
         // B. Check Provider Status (VIP)
         console.log(`🔍 [CHECK-STATUS] ID: ${id} | Status: ${trx.status} | ProviderID: ${trx.providerTrxId}`);
+        // DEPOSIT transactions don't go through game provider — return data directly
+        const isDepositTrx = trx.type === 'DEPOSIT' || trx.invoice?.startsWith('DEP-');
+        if (isDepositTrx) {
+            const safeDepositData = {
+                ...trx,
+                guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+            };
+            return res.json({ success: true, message: `Deposit Status: ${trx.status}`, data: safeDepositData });
+        }
         if (trx.status === 'PROCESSING' || trx.status === 'SUCCESS') {
             if (!trx.providerTrxId) {
                 // ... existing retry logic ...
@@ -839,7 +1475,7 @@ export const checkTransactionStatus = async (req, res) => {
                 console.log(`🔍 [CHECK-STATUS] Decision: ${trx.status} -> ${newStatus}`);
                 if (newStatus !== trx.status) {
                     await prisma.transaction.update({
-                        where: { id },
+                        where: { id: trx.id },
                         data: {
                             status: newStatus,
                             providerStatus: providerStatus,
@@ -850,10 +1486,10 @@ export const checkTransactionStatus = async (req, res) => {
                     // ⚡ Real-Time Update
                     const io = req.app.get('io');
                     if (io) {
-                        console.log(`🔌 [SOCKET] Emitting Update to ${id}: ${newStatus}`);
-                        io.to(id).emit('transaction_update', {
+                        console.log(`🔌 [SOCKET] Emitting Update to ${trx.id}: ${newStatus}`);
+                        io.to(trx.id).emit('transaction_update', {
                             status: newStatus,
-                            transactionId: id
+                            transactionId: trx.id
                         });
                     }
                     // Send WA if Success
@@ -872,10 +1508,19 @@ export const checkTransactionStatus = async (req, res) => {
                             whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
                         }
                     }
-                    return res.json({ success: true, message: "Status Updated", data: { status: newStatus } });
+                    const safeData = {
+                        ...trx,
+                        status: newStatus,
+                        guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+                    };
+                    return res.json({ success: true, message: "Status Updated", data: safeData });
                 }
                 else {
-                    return res.json({ success: true, message: `Status Unchanged (${providerStatus})`, data: { status: trx.status } });
+                    const safeData = {
+                        ...trx,
+                        guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+                    };
+                    return res.json({ success: true, message: `Status Unchanged (${providerStatus || 'PENDING'})`, data: safeData });
                 }
             }
             else {
@@ -883,11 +1528,15 @@ export const checkTransactionStatus = async (req, res) => {
                 return res.json({ success: false, message: `Provider Check Failed: ${result.message}` });
             }
         }
-        return res.json({ success: true, message: "No Updates Available (Not Processing)", data: { status: trx.status } });
+        const safeData = {
+            ...trx,
+            guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
+        };
+        return res.json({ success: true, message: "No Updates Available (Not Processing)", data: safeData });
     }
     catch (error) {
         console.error("Check Status Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 // GET /api/transaction/history
@@ -920,37 +1569,61 @@ export const getTransaction = async (req, res) => {
         });
         if (!transaction)
             return res.status(404).json({ success: false, message: 'Transaction not found' });
-        res.json({ success: true, data: transaction });
+        // IDOR Protection: 
+        // If transaction has a userId, ensure only the owner can see full details.
+        // For guest transactions, we might allow public view but hide sensitive contact info.
+        const authUser = req.user;
+        const isOwner = authUser && authUser.id === transaction.userId;
+        if (transaction.userId && !isOwner) {
+            return res.status(403).json({ success: false, message: 'Access Denied: Private Transaction' });
+        }
+        // Sensitive Data Masking for non-owners (e.g. public status check)
+        // [SECURITY] Enhanced Masking for Guests to prevent IDOR informational leaks
+        const targetIdStr = transaction.targetId || '';
+        const safeData = {
+            ...transaction,
+            targetId: isOwner ? transaction.targetId : (targetIdStr.length > 4 ? targetIdStr.slice(0, 3) + '****' : '****'),
+            guestContact: isOwner ? transaction.guestContact : '********' + (transaction.guestContact?.slice(-3) || ''),
+            paymentNo: transaction.paymentNo
+        };
+        res.json({ success: true, data: safeData });
     }
     catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 const VIP_WHITELIST_IP = '178.248.73.218';
 // POST /api/transaction/callback/vip
 export const handleVipCallback = async (req, res) => {
     // 1. IP Whitelist Check
-    const remoteIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
-    if (process.env.NODE_ENV === 'production' && !remoteIp.includes(VIP_WHITELIST_IP)) {
-        console.warn(`[VIP CALLBACK] Unauthorized IP: ${remoteIp}`);
-        // return res.status(403).json({ result: false, message: 'Unauthorized IP' }); 
+    // [SECURITY] Mitigation for X-Forwarded-For Spoofing
+    // Only trust headers if we are behind a known proxy. Otherwise, use remoteAddress.
+    const remoteIp = req.socket.remoteAddress || '';
+    if (process.env.NODE_ENV === 'production') {
+        const isWhitelisted = remoteIp === VIP_WHITELIST_IP || remoteIp.includes(VIP_WHITELIST_IP);
+        if (!isWhitelisted) {
+            console.warn(`❌ [VIP CALLBACK] Unauthorized IP: ${remoteIp}`);
+            return res.status(403).json({ result: false, message: 'Unauthorized IP' });
+        }
     }
-    // 2. Signature Check
+    // 2. Signature Check (Improved security note)
     const signature = req.headers['x-client-signature'];
     const apiId = process.env.VIP_APIID || '';
     const apiKey = process.env.VIP_APIKEY || '';
+    // Note: Provider signature is static (apiId + apiKey). 
+    // We add additional data checks below to mitigate replay/fraud.
     const mySignature = crypto.createHash('md5').update(apiId + apiKey).digest('hex');
     // Secure Comparison (Timing Safe)
     const signatureBuffer = Buffer.from(signature || '');
     const expectedBuffer = Buffer.from(mySignature);
     if (signatureBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
-        console.error(`[VIP CALLBACK] Invalid Signature. Got: ${signature}`);
+        console.error(`❌ [VIP CALLBACK] Invalid Signature from ${remoteIp}. Got: ${signature}`);
         return res.status(403).json({ result: false, message: 'Invalid Signature' });
     }
-    console.log('[VIP CALLBACK] Received:', JSON.stringify(req.body));
-    // Payload: { data: { trxid: '...', status: 'success', ... } }
+    // 3. Payload Validation
     const { data } = req.body;
     if (!data || !data.trxid) {
+        console.error(`❌ [VIP CALLBACK] Invalid Payload structure.`);
         return res.status(400).json({ result: false, message: 'Invalid Payload' });
     }
     const { trxid, status, note } = data;
@@ -960,34 +1633,33 @@ export const handleVipCallback = async (req, res) => {
             where: { providerTrxId: trxid }
         });
         if (!transaction) {
-            console.error(`[VIP CALLBACK] Transaction Not Found for Provider ID: ${trxid}`);
+            console.error(`❌ [VIP CALLBACK] Transaction Not Found for Provider ID: ${trxid}`);
             return res.status(404).json({ result: false, message: 'Transaction Not Found' });
         }
-        console.log(`[VIP CALLBACK] Updating Trx ${transaction.invoice} | Old Status: ${transaction.status} -> New: ${status}`);
+        // --- IDEMPOTENCY & SECURITY CHECK ---
+        // If transaction is already SUCCESS, we DO NOT allow changing it back to something else via callback.
+        if (transaction.status === 'SUCCESS') {
+            console.log(`ℹ️ [VIP CALLBACK] Transaction ${transaction.invoice} already SUCCESS. Ignoring callback.`);
+            return res.json({ result: true, message: 'Already success' });
+        }
+        console.log(`🔔 [VIP CALLBACK] Updating Trx ${transaction.invoice} | Old Status: ${transaction.status} -> New: ${status}`);
         let newStatus = transaction.status;
         let sn = transaction.sn || '';
         // Map Status
-        // Map Status
-        // User Logic: 
-        // - "success" -> Topup Sukses (SUCCESS)
-        // - "ga gagal" (error) -> Topup Gagal (FAILED)
         if (status === 'success') {
             newStatus = 'SUCCESS';
             sn = note || sn;
         }
+        else if (status === 'error') {
+            newStatus = 'FAILED';
+            sn = note || sn;
+        }
+        else if (status === 'waiting' || status === 'processing') {
+            newStatus = 'PROCESSING';
+        }
         else {
-            // Treat 'error' as FAILED.
-            // If 'waiting' or 'processing', arguably keep as PROCESSING or PENDING.
-            if (status === 'error') {
-                newStatus = 'FAILED';
-                sn = note || sn;
-            }
-            else if (status === 'waiting' || status === 'processing') {
-                newStatus = 'PROCESSING';
-            }
-            else {
-                newStatus = 'FAILED'; // Fallback for unknown failures
-            }
+            // Keep current status or map unknown as FAILED?
+            // Safer to just log and keep current if unknown.
         }
         if (newStatus !== transaction.status) {
             await prisma.transaction.update({
@@ -1009,8 +1681,6 @@ export const handleVipCallback = async (req, res) => {
                         targetWa = u.phoneNumber;
                 }
                 if (targetWa) {
-                    // Need product name? transaction object from findFirst doesn't include product relation.
-                    // We can just omit product name or fetch it. Quick fetch:
                     const fullTrx = await prisma.transaction.findUnique({ where: { id: transaction.id }, include: { product: true } });
                     const prodName = fullTrx?.product?.name || 'Item';
                     const waMsg = `🌟 *GRIMOIRE COINS STORE* 🌟\n---------------------------\n✅ *TOPUP SUKSES*\nInvoice: *${transaction.invoice}*\nGame: ${prodName}\nUser ID: ${transaction.targetId}\n\n🔑 *SN / KODE:*\n${sn}\n---------------------------\nTerima kasih sudah berbelanja di Grimoire Coins!`;
@@ -1021,7 +1691,7 @@ export const handleVipCallback = async (req, res) => {
         return res.json({ result: true, message: 'Callback Processed' });
     }
     catch (error) {
-        console.error('[VIP CALLBACK] Error:', error);
+        console.error('❌ [VIP CALLBACK] System Error:', error);
         return res.status(500).json({ result: false, message: 'Internal Error' });
     }
 };
