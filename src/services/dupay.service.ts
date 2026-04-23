@@ -17,41 +17,52 @@ type DupayCreatePaymentResult = {
 const DUPAY_BASE_URL = (process.env.DUPAY_BASE_URL || 'http://localhost:8080').replace(/\/$/, '');
 const DUPAY_GATEWAY_NAME = process.env.DUPAY_GATEWAY_NAME || 'TripaySandbox';
 
-const mapChannelToDupayMethod = (paymentMethod: string, channel?: string): string => {
-    const method = (paymentMethod || '').toLowerCase();
-    const rawChannel = (channel || '').toLowerCase();
-    const normalizedChannel = rawChannel.replace(/^va_/, '');
+/**
+ * Normalisasi channel code sebelum dikirim ke Dupay orchestrator.
+ * Translasi final ke kode PG (BCAVA, QRIS, dst.) sekarang ditangani oleh
+ * `channel_mapping` JSON di dupay-cms (per-gateway), bukan hardcoded di sini.
+ *
+ * Kita cuma rapih-rapih input:
+ *  - lowercase
+ *  - buang prefix "va_" / "ewallet_" / "retail_" kalau ada
+ */
+const normalizeChannel = (paymentMethod: string, channel?: string): string => {
+    const raw = (channel || paymentMethod || '').toLowerCase().trim();
+    return raw.replace(/^(va_|ewallet_|retail_|cstore_)/, '');
+};
 
-    const directMap: Record<string, string> = {
-        qris: 'QRISC',
-        qrisc: 'QRISC',
-        bca: 'BCAVA',
-        bcava: 'BCAVA',
-        mandiri: 'MANDIRIVA',
-        mandiriva: 'MANDIRIVA',
-        bni: 'BNIVA',
-        bniva: 'BNIVA',
-        bri: 'BRIVA',
-        briva: 'BRIVA',
-        cimb: 'CIMBVA',
-        cimbva: 'CIMBVA',
-        permata: 'PERMATAVA',
-        permatava: 'PERMATAVA',
-        dana: 'DANA',
-        ovo: 'OVO',
-        shopeepay: 'SHOPEEPAY',
-        alfamart: 'ALFAMART',
-        indomaret: 'INDOMARET',
-    };
+export type DupayChannel = {
+    code: string;
+    label?: string;
+    method?: 'va' | 'qris' | 'cstore' | 'ewallet' | '';
+    group?: string;
+    logo?: string;
+    min_amount?: number;
+    max_amount?: number;
+    fee_flat?: number;
+    fee_percent?: number;
+    active?: boolean;
+};
 
-    if (directMap[normalizedChannel]) return directMap[normalizedChannel];
-    if (directMap[method]) return directMap[method];
-
-    if (method === 'va') return 'BCAVA';
-    if (method === 'ewallet') return 'DANA';
-    if (method === 'retail' || method === 'cstore') return 'ALFAMART';
-
-    return 'QRISC';
+/**
+ * Fetch daftar channel aktif dari Dupay orchestrator.
+ * Source of truth: channel_mapping di tabel payment_gateways (dikonfig via dupay-cms).
+ *
+ * Endpoint ini public (no auth), supaya response bisa di-cache di edge layer kalau perlu.
+ */
+export const getAvailableChannels = async (gatewayName?: string): Promise<DupayChannel[]> => {
+    const name = (gatewayName || DUPAY_GATEWAY_NAME).trim();
+    try {
+        const res = await axios.get(`${DUPAY_BASE_URL}/v1/channels`, {
+            params: { gateway: name },
+            timeout: 10000,
+        });
+        const data = res.data?.data;
+        return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+        console.error('[DUPAY] getAvailableChannels error:', error?.response?.data || error?.message);
+        return [];
+    }
 };
 
 export const initPayment = async (
@@ -87,7 +98,7 @@ export const initPayment = async (
         order_id: trxId,
         amount: Math.floor(amount),
         currency: 'IDR',
-        payment_method: mapChannelToDupayMethod(paymentMethod, paymentChannel),
+        payment_method: normalizeChannel(paymentMethod, paymentChannel),
         gateway_name: gatewayName,
     };
 
