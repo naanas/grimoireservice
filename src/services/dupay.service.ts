@@ -115,9 +115,9 @@ export const initPayment = async (
             success: true,
             message: 'Success',
             paymentUrl: trx?.checkout_url || null,
-            paymentNo: trx?.checkout_url || trx?.pg_reference_id || null,
+            paymentNo: trx?.payment_code || trx?.checkout_url || null,
             paymentName: 'Dupay',
-            paymentTrxId: trx?.id || trx?.pg_reference_id || null,
+            paymentTrxId: trx?.pg_reference_id || trx?.id || null,
             expiredTime: null,
         };
     } catch (error: any) {
