@@ -52,13 +52,30 @@ export type DupayChannel = {
  */
 export const getAvailableChannels = async (gatewayName?: string): Promise<DupayChannel[]> => {
     const name = (gatewayName || DUPAY_GATEWAY_NAME).trim();
+    const endpointCandidates = [
+        '/v1/channels',        // current dupaybe public endpoint
+        '/v1/charge/channels', // backward compatibility (older routing)
+        '/channels',           // safety if DUPAY_BASE_URL already includes /v1
+    ];
     try {
-        const res = await axios.get(`${DUPAY_BASE_URL}/v1/channels`, {
-            params: { gateway: name },
-            timeout: 10000,
-        });
-        const data = res.data?.data;
-        return Array.isArray(data) ? data : [];
+        for (const endpoint of endpointCandidates) {
+            try {
+                const res = await axios.get(`${DUPAY_BASE_URL}${endpoint}`, {
+                    params: { gateway: name },
+                    timeout: 10000,
+                });
+                const data = res.data?.data;
+                if (Array.isArray(data)) return data;
+            } catch (error: any) {
+                // Try next candidate on common routing/config mismatch statuses.
+                const status = error?.response?.status;
+                if (status === 404 || status === 405 || status === 301 || status === 302) {
+                    continue;
+                }
+                throw error;
+            }
+        }
+        return [];
     } catch (error: any) {
         console.error('[DUPAY] getAvailableChannels error:', error?.response?.data || error?.message);
         return [];

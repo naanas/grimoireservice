@@ -984,30 +984,12 @@ export const createTransaction = async (req: Request, res: Response) => {
             // ... (rest of the service call code remains same) ...
             const paymentService = await import('../services/payment.service.js');
 
-            let finalChannel = paymentChannel || paymentMethod;
+            let finalChannel = (paymentChannel || paymentMethod || '').toLowerCase().trim();
 
-            // Dupay mapping (internal channel -> gateway channel code)
-            if (gateway === 'DUPAY') {
-                const dupayMap: Record<string, string> = {
-                    'qris': 'QRISC',
-                    'bca': 'BCAVA',
-                    'mandiri': 'MANDIRIVA',
-                    'bni': 'BNIVA',
-                    'bri': 'BRIVA',
-                    'cimb': 'CIMBVA',
-                    'permata': 'PERMATAVA',
-                    'dana': 'DANA',
-                    'ovo': 'OVO',
-                    'shopeepay': 'SHOPEEPAY',
-                    'alfamart': 'ALFAMART',
-                    'indomaret': 'INDOMARET'
-                };
-                const normalized = finalChannel.toLowerCase().replace(/^va_/, '');
-                if (dupayMap[normalized]) finalChannel = dupayMap[normalized];
-                else if (paymentMethod === 'VA') finalChannel = 'BCAVA';
-                else if (paymentMethod === 'EWALLET') finalChannel = 'DANA';
-                else finalChannel = 'QRISC';
-            } else if (gateway === 'TRIPAY') {
+            // IMPORTANT:
+            // DUPAY must receive raw internal channel code (qris, bca, mandiri, etc).
+            // Final translation to PG code (QRIS/BCAVA/...) is owned by dupaybe channel_mapping (CMS).
+            if (gateway === 'TRIPAY') {
                 const map: any = {
                     'bca': 'BCAVA', 'mandiri': 'MANDIRIVA', 'bni': 'BNIVA', 'bri': 'BRIVA',
                     'cimb': 'CIMBVA', 'permata': 'PERMATAVA', 'alfamart': 'ALFAMART',
@@ -1195,31 +1177,11 @@ export const createDeposit = async (req: Request, res: Response) => {
             gateway = (process.env.PAYMENT_GATEWAY || 'DUPAY').toUpperCase();
         }
 
-        let finalChannel = paymentMethod;
+        let finalChannel = (paymentMethod || '').toLowerCase().trim();
 
-        // Channel Mapping for Dupay/Tripay (Deposit logic)
-        if (gateway === 'DUPAY') {
-            const map: Record<string, string> = {
-                'va_bca': 'BCAVA',
-                'va_mandiri': 'MANDIRIVA',
-                'va_bni': 'BNIVA',
-                'va_bri': 'BRIVA',
-                'va_cimb': 'CIMBVA',
-                'va_permata': 'PERMATAVA',
-                'qris': 'QRISC',
-                'bca': 'BCAVA',
-                'mandiri': 'MANDIRIVA',
-                'bni': 'BNIVA',
-                'bri': 'BRIVA',
-                'cimb': 'CIMBVA',
-                'permata': 'PERMATAVA',
-                'dana': 'DANA',
-                'ovo': 'OVO',
-                'shopeepay': 'SHOPEEPAY'
-            };
-            if (map[finalChannel]) finalChannel = map[finalChannel];
-            else finalChannel = 'QRISC';
-        } else if (gateway === 'TRIPAY') {
+        // DUPAY path intentionally keeps raw channel code and delegates PG-code translation
+        // to dupaybe channel_mapping configured in CMS.
+        if (gateway === 'TRIPAY') {
             const map: any = {
                 'va_bca': 'BCAVA',
                 'va_mandiri': 'MANDIRIVA',
