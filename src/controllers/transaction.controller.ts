@@ -559,22 +559,57 @@ export const calculateFee = async (req: Request, res: Response) => {
     if (!code || !amount) return res.status(400).json({ success: false, message: 'Missing parameters' });
 
     try {
-        // 1. Fetch Tripay Configs
-        const configs = await (prisma as any).systemConfig.findMany({
-            where: {
-                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] }
-            }
-        });
-        const configMap: any = {};
-        configs.forEach((c: any) => configMap[c.key] = c.value);
+        const parsedAmount = parseInt(amount.toString(), 10);
+        if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+            return res.status(400).json({ success: false, message: 'Invalid amount' });
+        }
 
+        // 1) Resolve active gateway from config.
+        const configMap = await getPaymentConfigs([
+            'PAYMENT_GATEWAY',
+            'DUPAY_GATEWAY_NAME',
+            'TRIPAY_MODE',
+            'TRIPAY_SB_API_KEY',
+            'TRIPAY_PROD_API_KEY',
+        ]);
+        const gateway = (configMap['PAYMENT_GATEWAY'] || process.env.PAYMENT_GATEWAY || 'DUPAY').toUpperCase().trim();
+
+        // 2) DUPAY: source of truth fee = channel_mapping (flat + percent) from dupaybe.
+        if (gateway === 'DUPAY') {
+            const gatewayName = (configMap['DUPAY_GATEWAY_NAME'] || process.env.DUPAY_GATEWAY_NAME || 'TripaySandbox').trim();
+            const channels = await dupayService.getAvailableChannels(gatewayName);
+            const normalized = code.toString().toLowerCase().replace(/^(va_|ewallet_|retail_|cstore_)/, '');
+            const channel = channels.find((ch) => (ch.code || '').toLowerCase() === normalized);
+
+            if (!channel) {
+                return res.status(404).json({ success: false, message: `Channel ${normalized} not found in dupay mapping` });
+            }
+
+            const flat = Number(channel.fee_flat || 0);
+            const percent = Number(channel.fee_percent || 0);
+            const customerFee = Math.ceil(flat + ((percent / 100) * parsedAmount));
+
+            return res.json({
+                success: true,
+                data: {
+                    code: normalized,
+                    source: 'DUPAY_CHANNEL_MAPPING',
+                    flat_fee: flat,
+                    percent_fee: percent,
+                    total_fee: {
+                        customer: customerFee,
+                        merchant: customerFee,
+                    },
+                },
+            });
+        }
+
+        // 3) TRIPAY direct mode: keep real-time fee calculator.
         const mode = (configMap['TRIPAY_MODE'] || 'PRODUCTION').toUpperCase().trim();
         const apiKey = (mode === 'PRODUCTION' ? configMap['TRIPAY_PROD_API_KEY'] : configMap['TRIPAY_SB_API_KEY'])?.trim();
         const baseUrl = mode === 'PRODUCTION' ? 'https://tripay.co.id/api' : 'https://tripay.co.id/api-sandbox';
-
         if (!apiKey) return res.status(500).json({ success: false, message: 'Tripay API Key not configured' });
 
-        // 2. Map channel codes if needed
         const map: any = {
             'bca': 'BCAVA', 'mandiri': 'MANDIRIVA', 'bni': 'BNIVA', 'bri': 'BRIVA',
             'cimb': 'CIMBVA', 'permata': 'PERMATAVA', 'alfamart': 'ALFAMART',
@@ -583,9 +618,8 @@ export const calculateFee = async (req: Request, res: Response) => {
         };
         const tripayCode = map[code.toString().toLowerCase()] || code;
 
-        // 3. Call Tripay API
         const response = await axios.get(`${baseUrl}/merchant/fee-calculator`, {
-            params: { code: tripayCode, amount: parseInt(amount.toString()) },
+            params: { code: tripayCode, amount: parsedAmount },
             headers: { 'Authorization': `Bearer ${apiKey}` },
             validateStatus: (status) => status < 999
         });

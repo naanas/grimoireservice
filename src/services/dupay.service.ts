@@ -65,6 +65,7 @@ export const getAvailableChannels = async (gatewayName?: string): Promise<DupayC
         '/channels',           // safety if DUPAY_BASE_URL already includes /v1
     ];
     try {
+        let lastError: any = null;
         for (const endpoint of endpointCandidates) {
             try {
                 const res = await axios.get(`${DUPAY_BASE_URL}${endpoint}`, {
@@ -74,13 +75,17 @@ export const getAvailableChannels = async (gatewayName?: string): Promise<DupayC
                 const data = res.data?.data;
                 if (Array.isArray(data)) return data;
             } catch (error: any) {
-                // Try next candidate on common routing/config mismatch statuses.
+                // Try next candidate on common routing/config mismatch or protected-route statuses.
                 const status = error?.response?.status;
-                if (status === 404 || status === 405 || status === 301 || status === 302) {
+                lastError = error;
+                if (status === 401 || status === 403 || status === 404 || status === 405 || status === 301 || status === 302) {
                     continue;
                 }
                 throw error;
             }
+        }
+        if (lastError) {
+            console.error('[DUPAY] getAvailableChannels all endpoint candidates failed:', lastError?.response?.data || lastError?.message);
         }
         return [];
     } catch (error: any) {
