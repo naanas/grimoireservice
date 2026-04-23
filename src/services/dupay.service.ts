@@ -193,7 +193,7 @@ export const initPayment = async (
             success: true,
             message: 'Success',
             paymentUrl: trx?.checkout_url || null,
-            paymentNo: trx?.payment_code || trx?.checkout_url || null,
+            paymentNo: trx?.payment_code || null,
             paymentDeeplink: trx?.payment_deeplink || null,
             paymentName: 'Dupay',
             paymentTrxId: trx?.pg_reference_id || trx?.id || null,
