@@ -111,6 +111,7 @@ export const initPayment = async (
                 message: "Success",
                 paymentUrl: payloadData.checkout_url,
                 paymentNo: paymentNo,
+                paymentDeeplink: payloadData.deeplink_url || payloadData.deeplink || payloadData.deep_link || null,
                 paymentName: payloadData.payment_name,
                 paymentTrxId: payloadData.reference,
                 expiredTime: payloadData.expired_time

@@ -9,6 +9,7 @@ type DupayCreatePaymentResult = {
     message: string;
     paymentUrl: string | null;
     paymentNo: string | null;
+    paymentDeeplink: string | null;
     paymentName: string;
     paymentTrxId: string | null;
     expiredTime: string | null;
@@ -42,6 +43,12 @@ export type DupayChannel = {
     fee_flat?: number;
     fee_percent?: number;
     active?: boolean;
+};
+
+type DupayWebhookForwardParams = {
+    gatewayName: string;
+    rawPayload: string;
+    signature?: string;
 };
 
 /**
@@ -82,6 +89,48 @@ export const getAvailableChannels = async (gatewayName?: string): Promise<DupayC
     }
 };
 
+/**
+ * Forward webhook payload yang diterima grimoireservice ke dupaybe.
+ * Dipakai saat callback provider (mis. Tripay) harus mengarah ke domain grimoire,
+ * tapi status transaksi di dupaybe tetap harus sinkron.
+ */
+export const forwardWebhookToDupay = async ({
+    gatewayName,
+    rawPayload,
+    signature,
+}: DupayWebhookForwardParams): Promise<boolean> => {
+    const name = (gatewayName || '').trim();
+    const payload = (rawPayload || '').trim();
+    if (!name || !payload) return false;
+
+    const endpointCandidates = [
+        `/v1/webhook/${encodeURIComponent(name)}`,
+        `/webhook/${encodeURIComponent(name)}`,
+    ];
+
+    for (const endpoint of endpointCandidates) {
+        try {
+            await axios.post(`${DUPAY_BASE_URL}${endpoint}`, payload, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(signature ? { 'X-Callback-Signature': signature } : {}),
+                },
+                timeout: 10000,
+            });
+            return true;
+        } catch (error: any) {
+            const status = error?.response?.status;
+            if (status === 404 || status === 405 || status === 301 || status === 302) {
+                continue;
+            }
+            console.error('[DUPAY] forwardWebhookToDupay error:', error?.response?.data || error?.message);
+            return false;
+        }
+    }
+
+    return false;
+};
+
 export const initPayment = async (
     trxId: string,
     amount: number,
@@ -105,6 +154,7 @@ export const initPayment = async (
             message: 'Dupay API key/secret belum diatur di System Config admin.',
             paymentUrl: null,
             paymentNo: null,
+            paymentDeeplink: null,
             paymentName: 'Dupay',
             paymentTrxId: null,
             expiredTime: null,
@@ -144,6 +194,7 @@ export const initPayment = async (
             message: 'Success',
             paymentUrl: trx?.checkout_url || null,
             paymentNo: trx?.payment_code || trx?.checkout_url || null,
+            paymentDeeplink: trx?.payment_deeplink || null,
             paymentName: 'Dupay',
             paymentTrxId: trx?.pg_reference_id || trx?.id || null,
             expiredTime: null,
@@ -161,6 +212,7 @@ export const initPayment = async (
             message: errMessage,
             paymentUrl: null,
             paymentNo: null,
+            paymentDeeplink: null,
             paymentName: 'Dupay',
             paymentTrxId: null,
             expiredTime: null,

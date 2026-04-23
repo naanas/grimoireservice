@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import * as gameProvider from '../services/game.service.js'; // Consolidated on Game Service (Adapter)
 import * as ipaymuService from '../services/ipaymu.service.js';
 import * as whatsappService from '../services/whatsapp.service.js';
+import * as dupayService from '../services/dupay.service.js';
 import * as crypto from 'crypto'; // Added for VIP callback signature validation
 import axios from 'axios';
 
@@ -71,7 +72,7 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
         // 3. Fetch Tripay Configs from DB
         const configs = await prisma.systemConfig.findMany({
             where: {
-                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] }
+                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY', 'DUPAY_GATEWAY_NAME'] }
             }
         });
         const configMap: any = {};
@@ -104,6 +105,20 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
         if (signatureBuffer.length !== callbackBuffer.length || !crypto.timingSafeEqual(signatureBuffer, callbackBuffer)) {
             console.error(`❌ [TRIPAY-CALLBACK] Invalid Signature. Got: ${callbackSignature} | Expected: ${signature}`);
             return res.status(400).json({ success: false, message: 'Invalid Signature' });
+        }
+
+        // Forward callback ke dupaybe supaya status orchestrator tetap sinkron
+        // walau callback URL provider diarahkan ke domain grimoire.
+        const dupayGatewayName = (configMap['DUPAY_GATEWAY_NAME'] || process.env.DUPAY_GATEWAY_NAME || '').trim();
+        if (dupayGatewayName) {
+            const forwarded = await dupayService.forwardWebhookToDupay({
+                gatewayName: dupayGatewayName,
+                rawPayload: rawBody,
+                signature: String(callbackSignature || ''),
+            });
+            if (!forwarded) {
+                console.warn(`⚠️ [TRIPAY-CALLBACK] Failed forwarding webhook to dupaybe (gateway: ${dupayGatewayName})`);
+            }
         }
 
         // 5. Active Verification (Query Tripay Server)
@@ -1059,6 +1074,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                         id: trxId,
                         invoice,
                         paymentUrl: payment.paymentUrl,
+                        paymentDeeplink: (payment as any).paymentDeeplink || null,
                         paymentNo: payment.paymentNo,
                         paymentName: payment.paymentName,
                         expired: payment.expiredTime,
@@ -1256,6 +1272,7 @@ export const createDeposit = async (req: Request, res: Response) => {
             data: {
                 invoice,
                 paymentUrl: payment.paymentUrl,
+                paymentDeeplink: (payment as any).paymentDeeplink || null,
                 paymentNo: payment.paymentNo,
                 amount
             }
