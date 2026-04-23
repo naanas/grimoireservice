@@ -821,7 +821,25 @@ export const createTransaction = async (req: Request, res: Response) => {
         };
 
         if (paymentMethod !== 'BALANCE') {
-            if (gateway === 'TRIPAY' && tripayConfig.apiKey) {
+            if (gateway === 'DUPAY') {
+                // Sync fee with dupaybe channel mapping (source-of-truth)
+                try {
+                    const channels = await dupayService.getAvailableChannels(dupayConfig.gatewayName);
+                    const normalized = (paymentChannel || paymentMethod || '').toLowerCase().replace(/^(va_|ewallet_|retail_|cstore_)/, '');
+                    const channel = channels.find((ch) => (ch.code || '').toLowerCase() === normalized);
+                    if (channel) {
+                        const flat = Number(channel.fee_flat || 0);
+                        const percent = Number(channel.fee_percent || 0);
+                        adminFee = Math.ceil(flat + ((percent / 100) * finalAmount));
+                        console.log(`📡 [DUPAY-FEE] Sync: Rp${adminFee} for ${normalized} (flat=${flat}, percent=${percent})`);
+                    } else {
+                        adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount);
+                    }
+                } catch (err: any) {
+                    console.error("📡 [DUPAY-FEE] Sync Failed:", err?.response?.data || err?.message);
+                    adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount); // fallback
+                }
+            } else if (gateway === 'TRIPAY' && tripayConfig.apiKey) {
                 // 📡 Real-time TRIPAY Fee Sync
                 try {
                     const baseUrl = tripayConfig.mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
@@ -1083,8 +1101,9 @@ export const createTransaction = async (req: Request, res: Response) => {
                         paymentUrl: payment.paymentUrl,
                         paymentTrxId: payment.paymentTrxId,
                         paymentNo: payment.paymentNo,
+                        paymentDeeplink: (payment as any).paymentDeeplink || null,
                         paymentChannel: payment.paymentName
-                    }
+                    } as any
                 });
 
                 // Response (ENHANCED with Fee Details)
@@ -1287,8 +1306,9 @@ export const createDeposit = async (req: Request, res: Response) => {
                 paymentUrl: payment.paymentUrl,
                 paymentTrxId: payment.paymentTrxId,
                 paymentNo: payment.paymentNo,
+                paymentDeeplink: (payment as any).paymentDeeplink || null,
                 paymentChannel: payment.paymentName
-            }
+            } as any
         });
 
         // ⚡ [NOTIFICATION] Send Billing Details via WA
