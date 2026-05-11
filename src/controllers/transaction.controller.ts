@@ -331,7 +331,24 @@ export const processGameTopup = async (trxId: string) => {
                 }
             });
 
-            // TODO: Manual intervention required message via notification service
+            // WA NOTIF: PROVIDER_FAILED (ask user to contact admin)
+            let targetWa = trx.guestContact;
+            if (!targetWa && trx.userId) {
+                try {
+                    const u = await prisma.user.findUnique({ where: { id: trx.userId } });
+                    if (u?.phoneNumber) targetWa = u.phoneNumber;
+                } catch (e) {
+                    console.warn(`⚠️ [WA] Failed to fetch user phone for ${trx.userId}`);
+                }
+            }
+
+            if (targetWa) {
+                const waMsg = `*TRANSAKSI GAGAL* ❌\nOrder: *${trx.invoice}*\nItem: ${trx.product.name}\nStatus: PROVIDER_FAILED\nDetail: ${order.message || 'Provider error'}\n\nSilakan *hubungi admin* dan kirim detail ini:\n- Invoice: ${trx.invoice}\n- Trx ID: ${trx.id}\n\nTerima kasih.`;
+                whatsappService.sendMessage(targetWa, waMsg).catch((err) => {
+                    console.error("❌ [WA] Provider failed notification error:", err);
+                });
+            }
+
             return { success: false, message: order.message };
         }
 
