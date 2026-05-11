@@ -343,7 +343,7 @@ export const processGameTopup = async (trxId: string) => {
             }
 
             if (targetWa) {
-                const waMsg = `*TRANSAKSI GAGAL* ❌\nOrder: *${trx.invoice}*\nItem: ${trx.product.name}\nStatus: PROVIDER_FAILED\nDetail: ${order.message || 'Provider error'}\n\nSilakan *hubungi admin* dan kirim detail ini:\n- Invoice: ${trx.invoice}\n- Trx ID: ${trx.id}\n\nTerima kasih.`;
+                const waMsg = `*UPDATE TRANSAKSI* ⚠️\nOrder: *${trx.invoice}*\nItem: ${trx.product.name}\nStatus: Butuh bantuan admin\n\nTransaksi kamu belum bisa diproses otomatis.\nSilakan *hubungi admin* dan kirim detail berikut:\n- Invoice: ${trx.invoice}\n- Trx ID: ${trx.id}\n\nTerima kasih.`;
                 whatsappService.sendMessage(targetWa, waMsg).catch((err) => {
                     console.error("❌ [WA] Provider failed notification error:", err);
                 });
