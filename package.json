@@ -9,8 +9,9 @@
   "scripts": {
     "dev": "nodemon --exec tsx src/index.ts",
     "prisma:generate": "prisma generate",
+    "prisma:migrate:deploy": "prisma migrate deploy",
     "build": "prisma generate && tsc",
-    "start": "prisma generate && node dist/src/index.js",
+    "start": "prisma generate && prisma migrate deploy && node dist/src/index.js",
     "postinstall": "prisma generate",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
