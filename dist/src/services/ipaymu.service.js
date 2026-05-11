@@ -132,13 +132,7 @@ export const directPayment = async (trxId, amount, buyerName, buyerEmail, buyerP
         "paymentChannel": paymentChannel,
         "product": ["Topup Game"],
         "qty": ["1"],
-        "price": [amount],
-        "weight": ["1"],
-        "width": ["1"],
-        "height": ["1"],
-        "length": ["1"],
-        "deliveryArea": "76111",
-        "deliveryAddress": "Digital Product"
+        "price": [amount]
     };
     try {
         const bodyJson = JSON.stringify(bodyObj);

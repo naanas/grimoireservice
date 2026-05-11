@@ -129,6 +129,7 @@ export const checkTransaction = async (refId) => {
                 success: true,
                 data: {
                     ref_id: resData.data.ref_id,
+                    trxId: resData.data.trx_id,
                     status: resData.data.status,
                     sn: resData.data.sn,
                     message: resData.data.message

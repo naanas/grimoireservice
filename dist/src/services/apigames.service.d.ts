@@ -40,6 +40,7 @@ export declare const checkTransaction: (refId: string) => Promise<{
     success: boolean;
     data: {
         ref_id: any;
+        trxId: any;
         status: any;
         sn: any;
         message: any;

@@ -8,32 +8,38 @@ const FONNTE_TOKEN = process.env.FONNTE_TOKEN;
  * @param message Message content
  */
 export const sendMessage = async (target, message) => {
-    if (!FONNTE_TOKEN) {
-        console.warn('⚠️  [WA] No FONNTE_TOKEN set. Skipping WhatsApp notification.');
-        return { success: false, message: 'No Token' };
-    }
-    // Basic formatter: Fonnte prefers 08xx or 628xx.
-    // If user inputs 08, convert to 628 for consistency, though Fonnte supports both usually.
-    // Let's keep it as is or robustify. Fonnte docs say: "target: 08123456789 or 628123456789"
-    // So we just pass it.
-    // If target is empty or invalid
+    // Basic validation
     if (!target || target.length < 5)
         return { success: false };
+    if (!FONNTE_TOKEN) {
+        console.warn(`⚠️  [WA Service] FONNTE_TOKEN is missing. Notification skipped for ${target}.`);
+        return { success: false, message: 'Fonnte Token missing' };
+    }
     try {
-        console.log(`📨 [WA] Sending to ${target}...`);
+        console.log(`📨 [WA Service] Sending message directly to Fonnte API for ${target}...`);
         const response = await axios.post('https://api.fonnte.com/send', {
             target: target,
             message: message,
+            delay: '2', // Optional delay string like '2'
+            countryCode: '62' // Adjust as needed
         }, {
             headers: {
-                Authorization: FONNTE_TOKEN,
+                'Authorization': FONNTE_TOKEN,
+                'Content-Type': 'application/json'
             },
+            timeout: 10000 // 10 second timeout for external API
         });
-        console.log(`✅ [WA] Sent! Response:`, JSON.stringify(response.data));
-        return { success: true, data: response.data };
+        if (response.data.status) {
+            console.log(`✅ [WA Service] Success! Fonnte accepted message for ${target}.`);
+            return { success: true, data: response.data };
+        }
+        else {
+            console.warn(`⚠️ [WA Service] Fonnte declined:`, response.data.reason);
+            return { success: false, message: response.data.reason };
+        }
     }
     catch (error) {
-        console.error(`❌ [WA] Failed: ${error.response?.data?.reason || error.message}`);
+        console.error(`❌ [WA Service] Failed to connect to Fonnte API: ${error.message}`);
         return { success: false, message: error.message };
     }
 };

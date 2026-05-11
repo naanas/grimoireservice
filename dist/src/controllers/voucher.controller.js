@@ -49,7 +49,7 @@ export const checkVoucher = async (req, res) => {
     }
     catch (error) {
         console.error("Check Voucher Error:", error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 //# sourceMappingURL=voucher.controller.js.map

@@ -38,6 +38,7 @@ export declare const placeOrder: (refId: string, sku: string, dest: string, zone
 export declare const checkTransaction: (trxId: string) => Promise<{
     success: boolean;
     data: {
+        trxId: string;
         status: any;
         sn: any;
         message: any;
