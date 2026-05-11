@@ -1,6 +1,9 @@
 import { prisma } from '../lib/prisma.js';
-// Payment channels list (must match frontend PaymentChannels.ts)
-const PAYMENT_CHANNELS = [
+import { getAvailableChannels } from '../services/dupay.service.js';
+// Hardcoded fallback list — dipakai HANYA kalau dupaybe mati atau gateway belum
+// punya channel_mapping sama sekali. Setelah konfigurasi di CMS lengkap, daftar
+// aktif 100% source-of-truth dari dupaybe.
+const PAYMENT_CHANNELS_FALLBACK = [
     { code: 'qris', name: 'QRIS', method: 'qris', group: 'QRIS' },
     { code: 'bca', name: 'BCA Virtual Account', method: 'va', group: 'Virtual Account' },
     { code: 'mandiri', name: 'Mandiri Virtual Account', method: 'va', group: 'Virtual Account' },
@@ -13,34 +16,65 @@ const PAYMENT_CHANNELS = [
     { code: 'dana', name: 'DANA', method: 'ewallet', group: 'E-Wallet' },
     { code: 'ovo', name: 'OVO', method: 'ewallet', group: 'E-Wallet' },
     { code: 'shopeepay', name: 'ShopeePay', method: 'ewallet', group: 'E-Wallet' },
-    { code: 'linkaja', name: 'LinkAja', method: 'ewallet', group: 'E-Wallet' }
+    { code: 'linkaja', name: 'LinkAja', method: 'ewallet', group: 'E-Wallet' },
 ];
-// GET /api/payment/methods - Get ACTIVE payment methods only (Public)
-export const getActivePaymentMethods = async (req, res) => {
+// Mapping DupayChannel -> bentuk yang dipakai grimoire frontend (PaymentChannel).
+// Field dengan nilai 0/kosong DIHILANGKAN dari object (bukan di-set undefined)
+// supaya kompatibel dengan tsconfig `exactOptionalPropertyTypes: true` dan
+// optional chaining di UI ga render "Rp 0" untuk channel tanpa fee (mis. QRIS).
+const toFrontendShape = (ch) => {
+    const out = {
+        code: ch.code,
+        name: ch.label || ch.code.toUpperCase(),
+        method: ch.method || 'va',
+        group: ch.group || 'Virtual Account',
+        logo: ch.logo || `/payment/${ch.code}.png`,
+    };
+    if (ch.fee_flat && ch.fee_flat > 0)
+        out.flatFee = ch.fee_flat;
+    if (ch.fee_percent && ch.fee_percent > 0)
+        out.percentFee = ch.fee_percent;
+    if (ch.min_amount && ch.min_amount > 0)
+        out.minAmount = ch.min_amount;
+    if (ch.max_amount && ch.max_amount > 0)
+        out.maxAmount = ch.max_amount;
+    return out;
+};
+// GET /api/payment/methods - Get ACTIVE payment methods (Public)
+//
+// Flow:
+//   1. Fetch daftar channel aktif dari dupaybe (source of truth).
+//   2. Apply filter dari SystemConfig (`payment_method_<code>`) sebagai kill-switch
+//      per-channel di level grimoire. Default aktif kalau config tidak ada.
+//   3. Kalau dupaybe return kosong (belum dikonfig / error), fallback ke
+//      PAYMENT_CHANNELS_FALLBACK supaya UI tetap ada yang tampil.
+export const getActivePaymentMethods = async (_req, res) => {
     try {
-        // Get all payment method configs from SystemConfig
-        const configs = await prisma.systemConfig.findMany({
-            where: {
-                key: {
-                    startsWith: 'payment_method_'
-                }
-            }
-        });
-        // Create a map of code -> status
+        const [dupayChannels, configs] = await Promise.all([
+            getAvailableChannels(),
+            prisma.systemConfig.findMany({
+                where: { key: { startsWith: 'payment_method_' } },
+            }),
+        ]);
         const statusMap = {};
-        configs.forEach((config) => {
-            const code = config.key.replace('payment_method_', '');
-            statusMap[code] = config.value === 'active';
+        configs.forEach((c) => {
+            const code = c.key.replace('payment_method_', '');
+            statusMap[code] = c.value === 'active';
         });
-        // Filter only active payment methods
-        const activeMethods = PAYMENT_CHANNELS.filter(channel => {
-            // If not configured, default to active
-            return statusMap[channel.code] !== undefined ? statusMap[channel.code] : true;
-        });
-        res.json({ success: true, data: activeMethods });
+        let source;
+        if (dupayChannels.length > 0) {
+            source = dupayChannels.map(toFrontendShape);
+        }
+        else {
+            console.warn('[PAYMENT] Dupay channels empty, using hardcoded fallback');
+            source = PAYMENT_CHANNELS_FALLBACK;
+        }
+        // Apply kill-switch SystemConfig
+        const active = source.filter(ch => statusMap[ch.code] !== undefined ? statusMap[ch.code] : true);
+        res.json({ success: true, data: active });
     }
     catch (error) {
-        console.error("Get Active Payment Methods Error:", error);
+        console.error('[PAYMENT] Get Active Payment Methods Error:', error);
         res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };

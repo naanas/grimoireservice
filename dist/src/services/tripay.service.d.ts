@@ -6,6 +6,7 @@ export declare const initPayment: (trxId: string, amount: number, buyerName: str
     message: string;
     paymentUrl: any;
     paymentNo: any;
+    paymentDeeplink: any;
     paymentName: any;
     paymentTrxId: any;
     expiredTime: any;
@@ -14,6 +15,7 @@ export declare const initPayment: (trxId: string, amount: number, buyerName: str
     message: any;
     paymentUrl?: never;
     paymentNo?: never;
+    paymentDeeplink?: never;
     paymentName?: never;
     paymentTrxId?: never;
     expiredTime?: never;

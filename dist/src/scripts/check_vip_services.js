@@ -19,7 +19,6 @@ const createSignature = () => {
         payload.append('sign', createSignature());
         payload.append('type', 'services');
         payload.append('filter_status', 'available');
-        // We DO NOT filter by game here, to see ALL available games
         const response = await axios.post(VIP_URL, payload);
         const resData = response.data;
         if (resData.result) {

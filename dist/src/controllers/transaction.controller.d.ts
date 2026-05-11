@@ -23,6 +23,7 @@ export declare const checkGameId: (req: Request, res: Response) => Promise<Respo
 export declare const createTransaction: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const createDeposit: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const handleIpaymuCallback: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
+export declare const handleDupayCallback: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const checkTransactionStatus: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const getHistory: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const getTransaction: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;

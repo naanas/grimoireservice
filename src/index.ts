@@ -60,7 +60,7 @@ app.use(cors({
 
 app.use(express.json({
     verify: (req: any, res, buf) => {
-        if (req.url.includes('/api/callback/tripay')) {
+        if (req.url.includes('/api/callback/tripay') || req.url.includes('/api/callback/dupay')) {
             req.rawBody = buf.toString();
         }
     }

@@ -15,7 +15,7 @@ export const getConfig = async (req, res) => {
         }
         // Public Defaults
         if (!configMap['PAYMENT_GATEWAY']) {
-            configMap['PAYMENT_GATEWAY'] = process.env.PAYMENT_GATEWAY || 'IPAYMU';
+            configMap['PAYMENT_GATEWAY'] = process.env.PAYMENT_GATEWAY || 'DUPAY';
         }
         res.json({ success: true, data: configMap });
     }

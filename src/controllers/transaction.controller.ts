@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import * as gameProvider from '../services/game.service.js'; // Consolidated on Game Service (Adapter)
 import * as ipaymuService from '../services/ipaymu.service.js';
 import * as whatsappService from '../services/whatsapp.service.js';
+import * as dupayService from '../services/dupay.service.js';
 import * as crypto from 'crypto'; // Added for VIP callback signature validation
 import axios from 'axios';
 
@@ -71,7 +72,7 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
         // 3. Fetch Tripay Configs from DB
         const configs = await prisma.systemConfig.findMany({
             where: {
-                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] }
+                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY', 'DUPAY_GATEWAY_NAME'] }
             }
         });
         const configMap: any = {};
@@ -104,6 +105,20 @@ export const handleTripayCallback = async (req: Request, res: Response) => {
         if (signatureBuffer.length !== callbackBuffer.length || !crypto.timingSafeEqual(signatureBuffer, callbackBuffer)) {
             console.error(`❌ [TRIPAY-CALLBACK] Invalid Signature. Got: ${callbackSignature} | Expected: ${signature}`);
             return res.status(400).json({ success: false, message: 'Invalid Signature' });
+        }
+
+        // Forward callback ke dupaybe supaya status orchestrator tetap sinkron
+        // walau callback URL provider diarahkan ke domain grimoire.
+        const dupayGatewayName = (configMap['DUPAY_GATEWAY_NAME'] || process.env.DUPAY_GATEWAY_NAME || '').trim();
+        if (dupayGatewayName) {
+            const forwarded = await dupayService.forwardWebhookToDupay({
+                gatewayName: dupayGatewayName,
+                rawPayload: rawBody,
+                signature: String(callbackSignature || ''),
+            });
+            if (!forwarded) {
+                console.warn(`⚠️ [TRIPAY-CALLBACK] Failed forwarding webhook to dupaybe (gateway: ${dupayGatewayName})`);
+            }
         }
 
         // 5. Active Verification (Query Tripay Server)
@@ -544,22 +559,57 @@ export const calculateFee = async (req: Request, res: Response) => {
     if (!code || !amount) return res.status(400).json({ success: false, message: 'Missing parameters' });
 
     try {
-        // 1. Fetch Tripay Configs
-        const configs = await (prisma as any).systemConfig.findMany({
-            where: {
-                key: { in: ['TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_PROD_API_KEY'] }
-            }
-        });
-        const configMap: any = {};
-        configs.forEach((c: any) => configMap[c.key] = c.value);
+        const parsedAmount = parseInt(amount.toString(), 10);
+        if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+            return res.status(400).json({ success: false, message: 'Invalid amount' });
+        }
 
+        // 1) Resolve active gateway from config.
+        const configMap = await getPaymentConfigs([
+            'PAYMENT_GATEWAY',
+            'DUPAY_GATEWAY_NAME',
+            'TRIPAY_MODE',
+            'TRIPAY_SB_API_KEY',
+            'TRIPAY_PROD_API_KEY',
+        ]);
+        const gateway = (configMap['PAYMENT_GATEWAY'] || process.env.PAYMENT_GATEWAY || 'DUPAY').toUpperCase().trim();
+
+        // 2) DUPAY: source of truth fee = channel_mapping (flat + percent) from dupaybe.
+        if (gateway === 'DUPAY') {
+            const gatewayName = (configMap['DUPAY_GATEWAY_NAME'] || process.env.DUPAY_GATEWAY_NAME || 'TripaySandbox').trim();
+            const channels = await dupayService.getAvailableChannels(gatewayName);
+            const normalized = code.toString().toLowerCase().replace(/^(va_|ewallet_|retail_|cstore_)/, '');
+            const channel = channels.find((ch) => (ch.code || '').toLowerCase() === normalized);
+
+            if (!channel) {
+                return res.status(404).json({ success: false, message: `Channel ${normalized} not found in dupay mapping` });
+            }
+
+            const flat = Number(channel.fee_flat || 0);
+            const percent = Number(channel.fee_percent || 0);
+            const customerFee = Math.ceil(flat + ((percent / 100) * parsedAmount));
+
+            return res.json({
+                success: true,
+                data: {
+                    code: normalized,
+                    source: 'DUPAY_CHANNEL_MAPPING',
+                    flat_fee: flat,
+                    percent_fee: percent,
+                    total_fee: {
+                        customer: customerFee,
+                        merchant: customerFee,
+                    },
+                },
+            });
+        }
+
+        // 3) TRIPAY direct mode: keep real-time fee calculator.
         const mode = (configMap['TRIPAY_MODE'] || 'PRODUCTION').toUpperCase().trim();
         const apiKey = (mode === 'PRODUCTION' ? configMap['TRIPAY_PROD_API_KEY'] : configMap['TRIPAY_SB_API_KEY'])?.trim();
         const baseUrl = mode === 'PRODUCTION' ? 'https://tripay.co.id/api' : 'https://tripay.co.id/api-sandbox';
-
         if (!apiKey) return res.status(500).json({ success: false, message: 'Tripay API Key not configured' });
 
-        // 2. Map channel codes if needed
         const map: any = {
             'bca': 'BCAVA', 'mandiri': 'MANDIRIVA', 'bni': 'BNIVA', 'bri': 'BRIVA',
             'cimb': 'CIMBVA', 'permata': 'PERMATAVA', 'alfamart': 'ALFAMART',
@@ -568,9 +618,8 @@ export const calculateFee = async (req: Request, res: Response) => {
         };
         const tripayCode = map[code.toString().toLowerCase()] || code;
 
-        // 3. Call Tripay API
         const response = await axios.get(`${baseUrl}/merchant/fee-calculator`, {
-            params: { code: tripayCode, amount: parseInt(amount.toString()) },
+            params: { code: tripayCode, amount: parsedAmount },
             headers: { 'Authorization': `Bearer ${apiKey}` },
             validateStatus: (status) => status < 999
         });
@@ -702,25 +751,31 @@ export const createTransaction = async (req: Request, res: Response) => {
         const finalAmount = amount - discountAmount;
 
         // --- GATEWAY CONFIG & SELECTION (Moved Up for Fee Sync) ---
-        let gateway = 'IPAYMU';
+        let gateway = 'DUPAY';
         let tripayConfig = {
             mode: 'PRODUCTION',
             apiKey: '',
             privateKey: '',
             merchantCode: ''
         };
+        let dupayConfig = {
+            baseUrl: process.env.DUPAY_BASE_URL || 'http://localhost:8080',
+            apiKey: '',
+            secretKey: '',
+            gatewayName: process.env.DUPAY_GATEWAY_NAME || 'TripaySandbox'
+        };
 
         try {
             const configs = await (prisma as any).systemConfig.findMany({
                 where: {
-                    key: { in: ['PAYMENT_GATEWAY', 'TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_SB_MERCHANT_CODE', 'TRIPAY_PROD_API_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_PROD_MERCHANT_CODE'] }
+                    key: { in: ['PAYMENT_GATEWAY', 'TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_SB_MERCHANT_CODE', 'TRIPAY_PROD_API_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_PROD_MERCHANT_CODE', 'DUPAY_BASE_URL', 'DUPAY_API_KEY', 'DUPAY_SECRET_KEY', 'DUPAY_GATEWAY_NAME'] }
                 }
             });
             const configMap: Record<string, string> = {};
             configs.forEach((c: any) => configMap[c.key] = c.value);
 
             if (configMap['PAYMENT_GATEWAY']) gateway = configMap['PAYMENT_GATEWAY'].toUpperCase();
-            else gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
+            else gateway = (process.env.PAYMENT_GATEWAY || 'DUPAY').toUpperCase();
 
             if (gateway === 'TRIPAY') {
                 const mode = configMap['TRIPAY_MODE'] || 'PRODUCTION';
@@ -734,6 +789,13 @@ export const createTransaction = async (req: Request, res: Response) => {
                     tripayConfig.privateKey = configMap['TRIPAY_PROD_PRIVATE_KEY'] || '';
                     tripayConfig.merchantCode = configMap['TRIPAY_PROD_MERCHANT_CODE'] || '';
                 }
+            } else if (gateway === 'DUPAY') {
+                dupayConfig = {
+                    baseUrl: configMap['DUPAY_BASE_URL'] || dupayConfig.baseUrl,
+                    apiKey: configMap['DUPAY_API_KEY'] || '',
+                    secretKey: configMap['DUPAY_SECRET_KEY'] || '',
+                    gatewayName: configMap['DUPAY_GATEWAY_NAME'] || dupayConfig.gatewayName
+                };
             }
         } catch (e) {
             console.error("Config Loading Failed:", e);
@@ -759,7 +821,25 @@ export const createTransaction = async (req: Request, res: Response) => {
         };
 
         if (paymentMethod !== 'BALANCE') {
-            if (gateway === 'TRIPAY' && tripayConfig.apiKey) {
+            if (gateway === 'DUPAY') {
+                // Sync fee with dupaybe channel mapping (source-of-truth)
+                try {
+                    const channels = await dupayService.getAvailableChannels(dupayConfig.gatewayName);
+                    const normalized = (paymentChannel || paymentMethod || '').toLowerCase().replace(/^(va_|ewallet_|retail_|cstore_)/, '');
+                    const channel = channels.find((ch) => (ch.code || '').toLowerCase() === normalized);
+                    if (channel) {
+                        const flat = Number(channel.fee_flat || 0);
+                        const percent = Number(channel.fee_percent || 0);
+                        adminFee = Math.ceil(flat + ((percent / 100) * finalAmount));
+                        console.log(`📡 [DUPAY-FEE] Sync: Rp${adminFee} for ${normalized} (flat=${flat}, percent=${percent})`);
+                    } else {
+                        adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount);
+                    }
+                } catch (err: any) {
+                    console.error("📡 [DUPAY-FEE] Sync Failed:", err?.response?.data || err?.message);
+                    adminFee = getLocalFee(paymentMethod, paymentChannel, finalAmount); // fallback
+                }
+            } else if (gateway === 'TRIPAY' && tripayConfig.apiKey) {
                 // 📡 Real-time TRIPAY Fee Sync
                 try {
                     const baseUrl = tripayConfig.mode === 'SANDBOX' ? 'https://tripay.co.id/api-sandbox' : 'https://tripay.co.id/api';
@@ -971,9 +1051,11 @@ export const createTransaction = async (req: Request, res: Response) => {
             // ... (rest of the service call code remains same) ...
             const paymentService = await import('../services/payment.service.js');
 
-            let finalChannel = paymentChannel || paymentMethod;
+            let finalChannel = (paymentChannel || paymentMethod || '').toLowerCase().trim();
 
-            // ... mapping logic remains same ...
+            // IMPORTANT:
+            // DUPAY must receive raw internal channel code (qris, bca, mandiri, etc).
+            // Final translation to PG code (QRIS/BCAVA/...) is owned by dupaybe channel_mapping (CMS).
             if (gateway === 'TRIPAY') {
                 const map: any = {
                     'bca': 'BCAVA', 'mandiri': 'MANDIRIVA', 'bni': 'BNIVA', 'bri': 'BRIVA',
@@ -993,7 +1075,7 @@ export const createTransaction = async (req: Request, res: Response) => {
             const payment = await paymentService.createPayment(
                 trxId,
                 finalAmount, // Send NET amount (User requested to reduce amount by fee)
-                gateway as 'TRIPAY' | 'IPAYMU',
+                gateway as 'TRIPAY' | 'IPAYMU' | 'DUPAY',
                 finalChannel,
                 activeUser?.name || 'Guest',
                 activeUser?.email || 'guest@grimoire.com',
@@ -1004,7 +1086,11 @@ export const createTransaction = async (req: Request, res: Response) => {
                 tripayConfig.merchantCode,
                 tripayConfig.mode,
                 basePrice,
-                adminFee
+                adminFee,
+                dupayConfig.baseUrl,
+                dupayConfig.apiKey,
+                dupayConfig.secretKey,
+                dupayConfig.gatewayName
             );
 
             // Update Transaction with Result
@@ -1015,8 +1101,9 @@ export const createTransaction = async (req: Request, res: Response) => {
                         paymentUrl: payment.paymentUrl,
                         paymentTrxId: payment.paymentTrxId,
                         paymentNo: payment.paymentNo,
+                        paymentDeeplink: (payment as any).paymentDeeplink || null,
                         paymentChannel: payment.paymentName
-                    }
+                    } as any
                 });
 
                 // Response (ENHANCED with Fee Details)
@@ -1040,6 +1127,7 @@ export const createTransaction = async (req: Request, res: Response) => {
                         id: trxId,
                         invoice,
                         paymentUrl: payment.paymentUrl,
+                        paymentDeeplink: (payment as any).paymentDeeplink || null,
                         paymentNo: payment.paymentNo,
                         paymentName: payment.paymentName,
                         expired: payment.expiredTime,
@@ -1101,18 +1189,24 @@ export const createDeposit = async (req: Request, res: Response) => {
         const paymentService = await import('../services/payment.service.js');
 
         // --- GATEWAY SELECTION (SYNC WITH SYSTEM CONFIG) --- 🛡️
-        let gateway = 'IPAYMU'; // Default
+        let gateway = 'DUPAY'; // Default
         let tripayConfig = {
             mode: 'PRODUCTION', // Default
             apiKey: '',
             privateKey: '',
             merchantCode: ''
         };
+        let dupayConfig = {
+            baseUrl: process.env.DUPAY_BASE_URL || 'http://localhost:8080',
+            apiKey: '',
+            secretKey: '',
+            gatewayName: process.env.DUPAY_GATEWAY_NAME || 'TripaySandbox'
+        };
 
         try {
             const configs = await (prisma as any).systemConfig.findMany({
                 where: {
-                    key: { in: ['PAYMENT_GATEWAY', 'TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_SB_MERCHANT_CODE', 'TRIPAY_PROD_API_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_PROD_MERCHANT_CODE'] }
+                    key: { in: ['PAYMENT_GATEWAY', 'TRIPAY_MODE', 'TRIPAY_SB_API_KEY', 'TRIPAY_SB_PRIVATE_KEY', 'TRIPAY_SB_MERCHANT_CODE', 'TRIPAY_PROD_API_KEY', 'TRIPAY_PROD_PRIVATE_KEY', 'TRIPAY_PROD_MERCHANT_CODE', 'DUPAY_BASE_URL', 'DUPAY_API_KEY', 'DUPAY_SECRET_KEY', 'DUPAY_GATEWAY_NAME'] }
                 }
             });
 
@@ -1123,7 +1217,7 @@ export const createDeposit = async (req: Request, res: Response) => {
             if (configMap['PAYMENT_GATEWAY']) {
                 gateway = configMap['PAYMENT_GATEWAY'].toUpperCase();
             } else {
-                gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
+                gateway = (process.env.PAYMENT_GATEWAY || 'DUPAY').toUpperCase();
             }
 
             // 2. Tripay Config Selection
@@ -1140,14 +1234,22 @@ export const createDeposit = async (req: Request, res: Response) => {
                     tripayConfig.privateKey = configMap['TRIPAY_PROD_PRIVATE_KEY'] || '';
                     tripayConfig.merchantCode = configMap['TRIPAY_PROD_MERCHANT_CODE'] || '';
                 }
+            } else if (gateway === 'DUPAY') {
+                dupayConfig = {
+                    baseUrl: configMap['DUPAY_BASE_URL'] || dupayConfig.baseUrl,
+                    apiKey: configMap['DUPAY_API_KEY'] || '',
+                    secretKey: configMap['DUPAY_SECRET_KEY'] || '',
+                    gatewayName: configMap['DUPAY_GATEWAY_NAME'] || dupayConfig.gatewayName
+                };
             }
         } catch (e) {
-            gateway = (process.env.PAYMENT_GATEWAY || 'IPAYMU').toUpperCase();
+            gateway = (process.env.PAYMENT_GATEWAY || 'DUPAY').toUpperCase();
         }
 
-        let finalChannel = paymentMethod;
+        let finalChannel = (paymentMethod || '').toLowerCase().trim();
 
-        // Channel Mapping for Tripay (Deposit logic)
+        // DUPAY path intentionally keeps raw channel code and delegates PG-code translation
+        // to dupaybe channel_mapping configured in CMS.
         if (gateway === 'TRIPAY') {
             const map: any = {
                 'va_bca': 'BCAVA',
@@ -1173,7 +1275,7 @@ export const createDeposit = async (req: Request, res: Response) => {
         const payment = await paymentService.createPayment(
             trxId,
             Number(amount), // Send NET amount (User requested to reduce amount by fee)
-            gateway as 'TRIPAY' | 'IPAYMU',
+            gateway as 'TRIPAY' | 'IPAYMU' | 'DUPAY',
             finalChannel,
             user.name || 'User',
             user.email || 'user@grimoire.com',
@@ -1185,7 +1287,11 @@ export const createDeposit = async (req: Request, res: Response) => {
             tripayConfig.merchantCode,
             tripayConfig.mode,
             Number(amount), // basePrice
-            0 // adminFee for deposits
+            0, // adminFee for deposits
+            dupayConfig.baseUrl,
+            dupayConfig.apiKey,
+            dupayConfig.secretKey,
+            dupayConfig.gatewayName
         );
 
         if (!payment.success) {
@@ -1200,8 +1306,9 @@ export const createDeposit = async (req: Request, res: Response) => {
                 paymentUrl: payment.paymentUrl,
                 paymentTrxId: payment.paymentTrxId,
                 paymentNo: payment.paymentNo,
+                paymentDeeplink: (payment as any).paymentDeeplink || null,
                 paymentChannel: payment.paymentName
-            }
+            } as any
         });
 
         // ⚡ [NOTIFICATION] Send Billing Details via WA
@@ -1219,6 +1326,7 @@ export const createDeposit = async (req: Request, res: Response) => {
             data: {
                 invoice,
                 paymentUrl: payment.paymentUrl,
+                paymentDeeplink: (payment as any).paymentDeeplink || null,
                 paymentNo: payment.paymentNo,
                 amount
             }
@@ -1363,6 +1471,101 @@ export const handleIpaymuCallback = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('Webhook Error:', error);
         res.status(500).json({ success: false });
+    }
+};
+
+// POST /api/callback/dupay
+export const handleDupayCallback = async (req: Request, res: Response) => {
+    try {
+        const callbackSignature = req.headers['x-dupay-signature'] as string | undefined;
+        const { order_id, status, payment_method, amount } = req.body as {
+            order_id?: string;
+            status?: string;
+            payment_method?: string;
+            amount?: number | string;
+        };
+
+        if (!order_id || !status) {
+            return res.status(400).json({ success: false, message: 'Invalid payload' });
+        }
+
+        const trx = await prisma.transaction.findUnique({ where: { id: String(order_id) } });
+        if (!trx) {
+            return res.status(404).json({ success: false, message: 'Transaction not found' });
+        }
+
+        // Optional signature validation (enabled when DUPAY_WEBHOOK_SECRET is configured)
+        const webhookSecret = process.env.DUPAY_WEBHOOK_SECRET || '';
+        if (webhookSecret && callbackSignature) {
+            const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+            const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+
+            const expectedBuffer = Buffer.from(expected);
+            const callbackBuffer = Buffer.from(callbackSignature);
+            if (expectedBuffer.length !== callbackBuffer.length || !crypto.timingSafeEqual(expectedBuffer, callbackBuffer)) {
+                return res.status(400).json({ success: false, message: 'Invalid signature' });
+            }
+        }
+
+        const normalizedStatus = String(status).toUpperCase();
+        let newStatus: any = trx.status;
+
+        if (normalizedStatus === 'SUCCESS') {
+            newStatus = trx.type === 'DEPOSIT' ? 'SUCCESS' : 'PROCESSING';
+        } else if (normalizedStatus === 'FAILED' || normalizedStatus === 'REFUNDED' || normalizedStatus === 'EXPIRED') {
+            newStatus = 'FAILED';
+        }
+
+        // Idempotency guard
+        if (trx.status === 'SUCCESS' || (trx.status === 'PROCESSING' && newStatus === 'PROCESSING')) {
+            return res.json({ success: true, message: 'Already processed' });
+        }
+
+        if (newStatus !== trx.status) {
+            const paidAmount = Number(amount || trx.amount);
+            await prisma.transaction.update({
+                where: { id: trx.id },
+                data: {
+                    status: newStatus,
+                    amount: Number.isFinite(paidAmount) ? paidAmount : trx.amount,
+                    paymentChannel: payment_method || trx.paymentChannel || null,
+                    updatedAt: new Date(),
+                } as any
+            });
+
+            const io = req.app.get('io');
+            if (io) {
+                io.to(trx.id).emit('transaction_update', {
+                    status: newStatus,
+                    transactionId: trx.id
+                });
+            }
+
+            if (newStatus === 'SUCCESS' && trx.type === 'DEPOSIT' && trx.userId) {
+                await prisma.user.update({
+                    where: { id: trx.userId },
+                    data: { balance: { increment: Number.isFinite(paidAmount) ? paidAmount : trx.amount } }
+                });
+            }
+
+            if (newStatus === 'PROCESSING' && (trx.type === 'TOPUP' || !trx.type)) {
+                if (trx.voucherCode) {
+                    const v = await prisma.voucher.findUnique({ where: { code: trx.voucherCode } });
+                    if (v && v.stock > 0) {
+                        await prisma.voucher.update({
+                            where: { id: v.id },
+                            data: { stock: { decrement: 1 } }
+                        });
+                    }
+                }
+                processGameTopup(trx.id).catch((e) => console.error("❌ [DUPAY-CALLBACK] Background Topup Error:", e));
+            }
+        }
+
+        return res.json({ success: true });
+    } catch (error: any) {
+        console.error("❌ [DUPAY-CALLBACK] Error:", error);
+        return res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 

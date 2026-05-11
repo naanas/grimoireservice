@@ -87,7 +87,7 @@ async function main() {
     await prisma.systemConfig.upsert({
         where: { key: 'PAYMENT_GATEWAY' },
         update: {},
-        create: { key: 'PAYMENT_GATEWAY', value: 'TRIPAY' }
+        create: { key: 'PAYMENT_GATEWAY', value: 'DUPAY' }
     });
     await prisma.systemConfig.upsert({
         where: { key: 'TRIPAY_MODE' },
