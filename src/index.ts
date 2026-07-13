@@ -26,6 +26,8 @@ Sentry.init({
 import helmet from 'helmet';
 
 const app = express();
+// Render sits behind one reverse-proxy hop; required for req.ip / X-Forwarded-For.
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 4000;
 

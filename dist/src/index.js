@@ -21,6 +21,8 @@ Sentry.init({
 // process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // REMOVED FOR SECURITY
 import helmet from 'helmet';
 const app = express();
+// Render sits behind one reverse-proxy hop; required for req.ip / X-Forwarded-For.
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 4000;
 const io = new Server(httpServer, {

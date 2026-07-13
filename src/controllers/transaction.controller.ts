@@ -1918,17 +1918,21 @@ export const getTransaction = async (req: Request, res: Response) => {
 
 const VIP_WHITELIST_IP = '178.248.73.218';
 
+/** Normalize IPv4-mapped IPv6 (::ffff:x.x.x.x). */
+const normalizeClientIp = (ip: string) => ip.replace(/^::ffff:/, '').trim();
+
+/** Client IP for webhook auth — uses req.ip when trust proxy is enabled (Render). */
+const getCallbackClientIp = (req: Request) =>
+    normalizeClientIp(req.ip || req.socket.remoteAddress || '');
+
 // POST /api/callback/vip
 export const handleVipCallback = async (req: Request, res: Response) => {
-    // 1. IP Whitelist Check
-    // [SECURITY] Mitigation for X-Forwarded-For Spoofing
-    // Only trust headers if we are behind a known proxy. Otherwise, use remoteAddress.
-    const remoteIp = req.socket.remoteAddress || '';
+    const clientIp = getCallbackClientIp(req);
 
     if (process.env.NODE_ENV === 'production') {
-        const isWhitelisted = remoteIp === VIP_WHITELIST_IP || remoteIp.includes(VIP_WHITELIST_IP);
+        const isWhitelisted = clientIp === VIP_WHITELIST_IP || clientIp.includes(VIP_WHITELIST_IP);
         if (!isWhitelisted) {
-            console.warn(`❌ [VIP CALLBACK] Unauthorized IP: ${remoteIp}`);
+            console.warn(`❌ [VIP CALLBACK] Unauthorized IP: ${clientIp} (remote=${req.socket.remoteAddress}, xff=${req.headers['x-forwarded-for'] || '-'})`);
             return res.status(403).json({ result: false, message: 'Unauthorized IP' });
         }
     }
@@ -1947,7 +1951,7 @@ export const handleVipCallback = async (req: Request, res: Response) => {
     const expectedBuffer = Buffer.from(mySignature);
 
     if (signatureBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
-        console.error(`❌ [VIP CALLBACK] Invalid Signature from ${remoteIp}. Got: ${signature}`);
+        console.error(`❌ [VIP CALLBACK] Invalid Signature from ${clientIp}. Got: ${signature}`);
         return res.status(403).json({ result: false, message: 'Invalid Signature' });
     }
 
