@@ -53,6 +53,11 @@ import adminRoutes from './routes/admin.route.js';
 import chatRoutes from './routes/chat.route.js';
 import { PROVIDER } from './services/game.service.js';
 import { ChatService } from './services/chat.service.js';
+import {
+    getSessionCustomerLabel,
+    notifyAdminChatActivity,
+    sendChatAutoReplyIfNeeded,
+} from './services/chat-notify.service.js';
 
 // Security Middlewares
 app.use(helmet());
@@ -111,17 +116,18 @@ io.on('connection', (socket) => {
     logger.info(`🔌 Socket Connected: ${socket.id}`);
 
     // User/Guest joins their specific session
-    socket.on('join_session', (sessionId) => {
+    socket.on('join_session', async (sessionId) => {
         if (!sessionId) return;
         socket.join(sessionId);
         userSessions.set(socket.id, sessionId);
         logger.info(`👤 User joined session: ${sessionId}`);
 
-        // Notify Admin: User is Online
         io.to('admin_room').emit('user_status', { sessionId, online: true });
 
-        // Notify User: Admin Online Status
-        socket.emit('admin_status', { online: adminSockets.size > 0 });
+        const adminOnline = adminSockets.size > 0;
+        socket.emit('admin_status', { online: adminOnline });
+
+        await sendChatAutoReplyIfNeeded(sessionId, io, adminOnline);
     });
 
     // Admin joins the admin room to listen for all chats
@@ -171,8 +177,18 @@ io.on('connection', (socket) => {
                 io.to('admin_room').emit('admin_notification', {
                     type: 'NEW_MESSAGE',
                     sessionId,
-                    message: savedMessage
+                    message: savedMessage,
                 });
+
+                const customerLabel = await getSessionCustomerLabel(sessionId);
+                await notifyAdminChatActivity(sessionId, {
+                    customerLabel,
+                    preview: content,
+                });
+
+                if (adminSockets.size === 0) {
+                    await sendChatAutoReplyIfNeeded(sessionId, io, false);
+                }
             }
         } catch (error) {
             logger.error(`Message Error: ${error}`);
