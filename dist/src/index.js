@@ -31,6 +31,8 @@ const io = new Server(httpServer, {
     }
 });
 app.set('io', io);
+import { setSocketIO } from './lib/socket.js';
+setSocketIO(io);
 import transactionRoutes from './routes/transaction.route.js';
 import authRoutes from './routes/auth.route.js';
 import contentRoutes from './routes/content.route.js';

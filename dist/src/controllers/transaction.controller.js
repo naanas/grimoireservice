@@ -6,6 +6,15 @@ import * as whatsappService from '../services/whatsapp.service.js';
 import * as dupayService from '../services/dupay.service.js';
 import * as crypto from 'crypto'; // Added for VIP callback signature validation
 import axios from 'axios';
+import { emitTransactionUpdate } from '../lib/socket.js';
+import { sanitizeProductsForPublic, sanitizeTransactionForPublic, sanitizeTransactionsForPublic, } from '../lib/sanitize.js';
+import { syncProviderStatusIfNeeded } from '../services/transaction-sync.service.js';
+const maskTransactionGuestContact = (trx) => trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '');
+const toPublicTransactionResponse = (trx, overrides = {}) => sanitizeTransactionForPublic({
+    ...trx,
+    guestContact: maskTransactionGuestContact(trx),
+    ...overrides,
+});
 // --- CONFIG CACHE (reduces DB queries from every request to max once per 5 minutes) ---
 let _configCache = null;
 let _configCacheExpiry = 0;
@@ -251,21 +260,24 @@ export const processGameTopup = async (trxId) => {
         if (order.success && order.data) {
             // 4. Provider Accepted Request
             console.log(`✅ [PROCESS] Provider Accepted! TrxId: ${order.data.trxId} | Status: ${order.data.status}`);
-            // Map VIP Status to Our Schema
-            // VIP: status can be 'waiting', 'success', 'processing'
+            // Map VIP Status to Our Schema (waiting, success, processing, etc.)
+            const rawProviderStatus = String(order.data.status || 'waiting');
             let newStatus = 'PROCESSING';
-            if (order.data.status.toLowerCase() === 'success')
+            const pStatus = rawProviderStatus.toLowerCase();
+            if (pStatus === 'success' || pStatus === 'sukses' || pStatus === 'berhasil') {
                 newStatus = 'SUCCESS';
+            }
             await prisma.transaction.update({
                 where: { id: trxId },
                 data: {
-                    status: newStatus, // Cast to Enum
+                    status: newStatus,
                     providerTrxId: order.data.trxId,
-                    providerStatus: order.data.status,
-                    sn: order.data.sn, // Sometimes available immediately?
+                    providerStatus: rawProviderStatus,
+                    sn: order.data.sn || undefined,
                     updatedAt: new Date()
                 }
             });
+            emitTransactionUpdate(trxId, newStatus);
             // WA NOTIF: PROCESSING or SUCCESS
             if (trx.guestContact) {
                 if (newStatus === 'SUCCESS') {
@@ -290,7 +302,25 @@ export const processGameTopup = async (trxId) => {
                     updatedAt: new Date()
                 }
             });
-            // TODO: Manual intervention required message via notification service
+            emitTransactionUpdate(trxId, 'PROVIDER_FAILED');
+            // WA NOTIF: PROVIDER_FAILED (ask user to contact admin)
+            let targetWa = trx.guestContact;
+            if (!targetWa && trx.userId) {
+                try {
+                    const u = await prisma.user.findUnique({ where: { id: trx.userId } });
+                    if (u?.phoneNumber)
+                        targetWa = u.phoneNumber;
+                }
+                catch (e) {
+                    console.warn(`⚠️ [WA] Failed to fetch user phone for ${trx.userId}`);
+                }
+            }
+            if (targetWa) {
+                const waMsg = `*UPDATE TRANSAKSI* ⚠️\nOrder: *${trx.invoice}*\nItem: ${trx.product.name}\nStatus: Butuh bantuan admin\n\nTransaksi kamu belum bisa diproses otomatis.\nSilakan *hubungi admin* dan kirim detail berikut:\n- Invoice: ${trx.invoice}\n- Trx ID: ${trx.id}\n\nTerima kasih.`;
+                whatsappService.sendMessage(targetWa, waMsg).catch((err) => {
+                    console.error("❌ [WA] Provider failed notification error:", err);
+                });
+            }
             return { success: false, message: order.message };
         }
     }
@@ -483,7 +513,7 @@ export const getProducts = async (req, res) => {
                 { price_sell: 'asc' }
             ]
         });
-        res.json({ success: true, data: products });
+        res.json({ success: true, data: sanitizeProductsForPublic(products) });
     }
     catch (error) {
         console.error("DB Error:", error);
@@ -1476,10 +1506,7 @@ export const checkTransactionStatus = async (req, res) => {
                 // 2. PAID -> Process
                 // 3. EXPIRED/FAILED -> Fail
                 let gatewayStatus = 'PENDING';
-                const safeData = {
-                    ...trx,
-                    guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
-                };
+                const safeData = toPublicTransactionResponse(trx);
                 if (payCheck.success) {
                     if (payCheck.status === 6 || String(payCheck.statusDesc).toUpperCase() === 'BERHASIL' || String(payCheck.message).toUpperCase() === 'PAID') {
                         gatewayStatus = 'PAID';
@@ -1501,11 +1528,10 @@ export const checkTransactionStatus = async (req, res) => {
                     return res.json({
                         success: true,
                         message: "Payment detected at Gateway. Waiting for system confirmation...",
-                        data: {
-                            ...safeData,
-                            status: trx.status, // Keep DB status
-                            detectedStatus: detectedStatus // Return what gateway says
-                        }
+                        data: toPublicTransactionResponse(trx, {
+                            status: trx.status,
+                            detectedStatus: detectedStatus,
+                        }),
                     });
                 }
                 else if (gatewayStatus === 'EXPIRED' || gatewayStatus === 'FAILED') {
@@ -1539,11 +1565,7 @@ export const checkTransactionStatus = async (req, res) => {
         // DEPOSIT transactions don't go through game provider — return data directly
         const isDepositTrx = trx.type === 'DEPOSIT' || trx.invoice?.startsWith('DEP-');
         if (isDepositTrx) {
-            const safeDepositData = {
-                ...trx,
-                guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
-            };
-            return res.json({ success: true, message: `Deposit Status: ${trx.status}`, data: safeDepositData });
+            return res.json({ success: true, message: `Deposit Status: ${trx.status}`, data: toPublicTransactionResponse(trx) });
         }
         if (trx.status === 'PROCESSING' || trx.status === 'SUCCESS') {
             if (!trx.providerTrxId) {
@@ -1610,19 +1632,18 @@ export const checkTransactionStatus = async (req, res) => {
                             whatsappService.sendMessage(targetWa, waMsg).catch(console.error);
                         }
                     }
-                    const safeData = {
-                        ...trx,
-                        status: newStatus,
-                        guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
-                    };
-                    return res.json({ success: true, message: "Status Updated", data: safeData });
+                    return res.json({
+                        success: true,
+                        message: "Status Updated",
+                        data: toPublicTransactionResponse(trx, { status: newStatus }),
+                    });
                 }
                 else {
-                    const safeData = {
-                        ...trx,
-                        guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
-                    };
-                    return res.json({ success: true, message: `Status Unchanged (${providerStatus || 'PENDING'})`, data: safeData });
+                    return res.json({
+                        success: true,
+                        message: `Status Unchanged (${providerStatus || 'PENDING'})`,
+                        data: toPublicTransactionResponse(trx),
+                    });
                 }
             }
             else {
@@ -1630,11 +1651,11 @@ export const checkTransactionStatus = async (req, res) => {
                 return res.json({ success: false, message: `Provider Check Failed: ${result.message}` });
             }
         }
-        const safeData = {
-            ...trx,
-            guestContact: trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '')
-        };
-        return res.json({ success: true, message: "No Updates Available (Not Processing)", data: safeData });
+        return res.json({
+            success: true,
+            message: "No Updates Available (Not Processing)",
+            data: toPublicTransactionResponse(trx),
+        });
     }
     catch (error) {
         console.error("Check Status Error:", error);
@@ -1652,7 +1673,7 @@ export const getHistory = async (req, res) => {
             orderBy: { createdAt: 'desc' },
             include: { product: true }
         });
-        res.json({ success: true, data: transactions });
+        res.json({ success: true, data: sanitizeTransactionsForPublic(transactions) });
     }
     catch (error) {
         console.error("History Error:", error);
@@ -1665,13 +1686,17 @@ export const getTransaction = async (req, res) => {
         const { id } = req.params;
         if (!id)
             return res.status(400).json({ success: false, message: 'ID required' });
-        const transaction = await prisma.transaction.findUnique({
+        let transaction = await prisma.transaction.findUnique({
             where: { id: String(id) },
             include: { product: true }
         });
         if (!transaction)
             return res.status(404).json({ success: false, message: 'Transaction not found' });
-        // IDOR Protection: 
+        const synced = await syncProviderStatusIfNeeded(transaction);
+        if (synced && typeof synced === 'object' && 'id' in synced) {
+            transaction = synced;
+        }
+        // IDOR Protection:
         // If transaction has a userId, ensure only the owner can see full details.
         // For guest transactions, we might allow public view but hide sensitive contact info.
         const authUser = req.user;
@@ -1682,12 +1707,12 @@ export const getTransaction = async (req, res) => {
         // Sensitive Data Masking for non-owners (e.g. public status check)
         // [SECURITY] Enhanced Masking for Guests to prevent IDOR informational leaks
         const targetIdStr = transaction.targetId || '';
-        const safeData = {
+        const safeData = sanitizeTransactionForPublic({
             ...transaction,
             targetId: isOwner ? transaction.targetId : (targetIdStr.length > 4 ? targetIdStr.slice(0, 3) + '****' : '****'),
             guestContact: isOwner ? transaction.guestContact : '********' + (transaction.guestContact?.slice(-3) || ''),
             paymentNo: transaction.paymentNo
-        };
+        });
         res.json({ success: true, data: safeData });
     }
     catch (error) {
@@ -1695,7 +1720,7 @@ export const getTransaction = async (req, res) => {
     }
 };
 const VIP_WHITELIST_IP = '178.248.73.218';
-// POST /api/transaction/callback/vip
+// POST /api/callback/vip
 export const handleVipCallback = async (req, res) => {
     // 1. IP Whitelist Check
     // [SECURITY] Mitigation for X-Forwarded-For Spoofing
@@ -1773,6 +1798,7 @@ export const handleVipCallback = async (req, res) => {
                     updatedAt: new Date()
                 }
             });
+            emitTransactionUpdate(transaction.id, newStatus);
             // Send WA Notification
             if (newStatus === 'SUCCESS') {
                 console.log(`📨 [WA] Sending Success Notification via Callback...`);

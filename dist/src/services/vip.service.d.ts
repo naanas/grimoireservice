@@ -25,7 +25,7 @@ export declare const placeOrder: (refId: string, sku: string, dest: string, zone
     data: {
         trxId: any;
         status: string;
-        sn: string;
+        sn: any;
         message: any;
         price: any;
     };

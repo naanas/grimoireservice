@@ -96,12 +96,13 @@ export const placeOrder = async (refId, sku, dest, zoneId) => {
         const resData = response.data;
         // { result: true, data: { trxid, data, zone, service, status, price, balance } }
         if (resData.result) {
+            const rawStatus = String(resData.data.status || 'waiting');
             return {
                 success: true,
                 data: {
                     trxId: resData.data.trxid,
-                    status: resData.data.status === 'success' ? 'SUCCESS' : 'PENDING', // usually 'waiting'
-                    sn: '', // delivered later
+                    status: rawStatus,
+                    sn: resData.data.note || '',
                     message: resData.message,
                     price: resData.data.price
                 }

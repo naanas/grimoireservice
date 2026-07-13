@@ -50,6 +50,8 @@ export const register = async (req, res) => {
                     email,
                     phoneNumber,
                     password: hashedPassword,
+                    role: 'USER',
+                    isVerified: false,
                     verificationToken
                 }
             });
