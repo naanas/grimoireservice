@@ -7,6 +7,7 @@ import * as whatsappService from '../services/whatsapp.service.js';
 import * as dupayService from '../services/dupay.service.js';
 import * as crypto from 'crypto'; // Added for VIP callback signature validation
 import axios from 'axios';
+import { emitTransactionUpdate } from '../lib/socket.js';
 
 // --- CONFIG CACHE (reduces DB queries from every request to max once per 5 minutes) ---
 let _configCache: Record<string, string> | null = null;
@@ -307,6 +308,8 @@ export const processGameTopup = async (trxId: string) => {
                 }
             });
 
+            emitTransactionUpdate(trxId, newStatus);
+
             // WA NOTIF: PROCESSING or SUCCESS
             if (trx.guestContact) {
                 if (newStatus === 'SUCCESS') {
@@ -330,6 +333,8 @@ export const processGameTopup = async (trxId: string) => {
                     updatedAt: new Date()
                 }
             });
+
+            emitTransactionUpdate(trxId, 'PROVIDER_FAILED');
 
             // WA NOTIF: PROVIDER_FAILED (ask user to contact admin)
             let targetWa = trx.guestContact;
@@ -1988,6 +1993,8 @@ export const handleVipCallback = async (req: Request, res: Response) => {
                     updatedAt: new Date()
                 }
             });
+
+            emitTransactionUpdate(transaction.id, newStatus);
 
             // Send WA Notification
             if (newStatus === 'SUCCESS') {
