@@ -12,7 +12,7 @@ export declare const processGameTopup: (trxId: string) => Promise<{
     success: boolean;
     message: any;
 }>;
-export declare const getCategories: (req: Request, res: Response) => Promise<void>;
+export declare const getCategories: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const getCategoryBySlug: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const getBestSellingCategories: (req: Request, res: Response) => Promise<void>;
 export declare const getPopularCategories: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;

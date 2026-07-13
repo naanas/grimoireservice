@@ -389,10 +389,19 @@ export const processGameTopup = async (trxId: string) => {
 // GET /api/categories
 export const getCategories = async (req: Request, res: Response) => {
     try {
+        const listAll = String(req.query.all || '').toLowerCase() === 'true';
+
         const categories = await prisma.category.findMany({
             where: { isActive: true },
-            orderBy: { name: 'asc' }
+            orderBy: { name: 'asc' },
         });
+
+        if (listAll) {
+            return res.json({
+                success: true,
+                data: categories.map((cat) => sanitizeCategoryForPublic(cat as any)),
+            });
+        }
 
         // Group by Brand to return unique entries for Home Page
         const uniqueBrands: any[] = [];
