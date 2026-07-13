@@ -1,25 +1,109 @@
-/** Remove internal cost fields from product payloads sent to public clients. */
+const PENDING_STATUS = 'PENDING';
+const maskGuestContact = (trx, isOwner) => {
+    if (isOwner)
+        return trx.guestContact;
+    return trx.userId
+        ? trx.guestContact || '********'
+        : '********' + (trx.guestContact?.slice(-3) || '');
+};
+const maskTargetId = (targetId, isOwner) => {
+    if (isOwner || !targetId)
+        return targetId;
+    return targetId.length > 4 ? targetId.slice(0, 3) + '****' : '****';
+};
+/** Strip internal pricing config from category payloads. */
+export function sanitizeCategoryForPublic(category) {
+    if (!category || typeof category !== 'object')
+        return category;
+    const { profitMargin: _profitMargin, createdAt: _createdAt, updatedAt: _updatedAt, ...publicCategory } = category;
+    return publicCategory;
+}
+/** Public product shape for storefront APIs. */
 export function sanitizeProductForPublic(product) {
     if (!product || typeof product !== 'object')
         return product;
-    const { price_provider: _removed, ...publicProduct } = product;
-    return publicProduct;
-}
-/** Strip provider cost from nested product on transaction responses. */
-export function sanitizeTransactionForPublic(trx) {
-    if (!trx || typeof trx !== 'object')
-        return trx;
-    if (!trx.product || typeof trx.product !== 'object')
-        return trx;
+    const { price_provider: _priceProvider, sku_code: _skuCode, categoryId: _categoryId, createdAt: _createdAt, updatedAt: _updatedAt, category, ...rest } = product;
     return {
-        ...trx,
-        product: sanitizeProductForPublic(trx.product),
+        ...rest,
+        ...(category && typeof category === 'object'
+            ? { category: sanitizeCategoryForPublic(category) }
+            : {}),
     };
 }
 export function sanitizeProductsForPublic(products) {
     return products.map((p) => sanitizeProductForPublic(p));
 }
-export function sanitizeTransactionsForPublic(transactions) {
-    return transactions.map((t) => sanitizeTransactionForPublic(t));
+/** Slim transaction payload for public clients (GET /check, history, check-status). */
+export function sanitizeTransactionForPublic(trx, options = {}) {
+    if (!trx || typeof trx !== 'object')
+        return trx;
+    const isOwner = options.isOwner ?? false;
+    const status = String(trx.status || '');
+    const isPending = status === PENDING_STATUS;
+    const { userId: _userId, productId: _productId, providerTrxId: _providerTrxId, providerStatus: _providerStatus, paymentTrxId: _paymentTrxId, paymentGateway: _paymentGateway, paymentMethod: _paymentMethod, voucherCode: _voucherCode, product, guestContact: _guestContact, targetId, paymentUrl, paymentNo, paymentDeeplink, sn, ...rest } = trx;
+    const paymentLabel = trx.paymentChannel ?? trx.paymentMethod;
+    const publicTrx = {
+        ...rest,
+        status,
+        guestContact: maskGuestContact(trx, isOwner),
+        targetId: maskTargetId(String(targetId || ''), isOwner),
+        paymentChannel: paymentLabel,
+        paymentMethod: paymentLabel,
+    };
+    if (product && typeof product === 'object') {
+        const p = product;
+        publicTrx.product = {
+            name: p.name,
+            price_sell: p.price_sell,
+        };
+    }
+    if (isPending) {
+        if (paymentNo) {
+            publicTrx.paymentNo = paymentNo;
+        }
+        else if (paymentUrl) {
+            publicTrx.paymentUrl = paymentUrl;
+        }
+        if (paymentDeeplink && !paymentNo) {
+            publicTrx.paymentDeeplink = paymentDeeplink;
+        }
+    }
+    if (sn) {
+        publicTrx.sn = sn;
+    }
+    return publicTrx;
+}
+export function sanitizeTransactionsForPublic(transactions, options = {}) {
+    return transactions.map((t) => sanitizeTransactionForPublic(t, options));
+}
+export function toPublicTransactionResponse(trx, options = {}) {
+    const { overrides, ...sanitizeOptions } = options;
+    return sanitizeTransactionForPublic({ ...trx, ...overrides }, sanitizeOptions);
+}
+/** Checkout create response — no gateway/vendor internals. */
+export function toPublicCheckoutResponse(payload) {
+    const hasQris = Boolean(payload.paymentNo);
+    const data = {
+        ...(payload.id ? { id: payload.id } : {}),
+        invoice: payload.invoice,
+        ...(payload.status ? { status: payload.status } : {}),
+        paymentName: payload.paymentName ?? null,
+        expired: payload.expired ?? null,
+        ...(payload.productName ? { productName: payload.productName } : {}),
+        amount: payload.amount,
+        ...(payload.basePrice != null ? { basePrice: payload.basePrice } : {}),
+        ...(payload.adminFee != null ? { adminFee: payload.adminFee } : {}),
+        ...(payload.discountAmount != null ? { discountAmount: payload.discountAmount } : {}),
+    };
+    if (hasQris) {
+        data.paymentNo = payload.paymentNo;
+    }
+    else {
+        if (payload.paymentUrl)
+            data.paymentUrl = payload.paymentUrl;
+        if (payload.paymentDeeplink)
+            data.paymentDeeplink = payload.paymentDeeplink;
+    }
+    return data;
 }
 //# sourceMappingURL=sanitize.js.map

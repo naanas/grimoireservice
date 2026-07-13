@@ -1,11 +1,43 @@
-/** Remove internal cost fields from product payloads sent to public clients. */
-export declare function sanitizeProductForPublic(product: Record<string, unknown> | null | undefined): {
+type RecordLike = Record<string, unknown>;
+export type PublicTransactionOptions = {
+    isOwner?: boolean;
+};
+/** Strip internal pricing config from category payloads. */
+export declare function sanitizeCategoryForPublic(category: RecordLike | null | undefined): {
     [x: string]: unknown;
 } | null | undefined;
-/** Strip provider cost from nested product on transaction responses. */
-export declare function sanitizeTransactionForPublic(trx: Record<string, unknown> | null | undefined): Record<string, unknown> | null | undefined;
-export declare function sanitizeProductsForPublic(products: Record<string, unknown>[]): ({
-    [x: string]: unknown;
+/** Public product shape for storefront APIs. */
+export declare function sanitizeProductForPublic(product: RecordLike | null | undefined): {
+    category?: {
+        [x: string]: unknown;
+    } | null | undefined;
+} | null | undefined;
+export declare function sanitizeProductsForPublic(products: RecordLike[]): ({
+    category?: {
+        [x: string]: unknown;
+    } | null | undefined;
 } | null | undefined)[];
-export declare function sanitizeTransactionsForPublic(transactions: Record<string, unknown>[]): (Record<string, unknown> | null | undefined)[];
+/** Slim transaction payload for public clients (GET /check, history, check-status). */
+export declare function sanitizeTransactionForPublic(trx: RecordLike | null | undefined, options?: PublicTransactionOptions): RecordLike | null | undefined;
+export declare function sanitizeTransactionsForPublic(transactions: RecordLike[], options?: PublicTransactionOptions): (RecordLike | null | undefined)[];
+export declare function toPublicTransactionResponse(trx: RecordLike, options?: PublicTransactionOptions & {
+    overrides?: RecordLike;
+}): RecordLike | null | undefined;
+/** Checkout create response — no gateway/vendor internals. */
+export declare function toPublicCheckoutResponse(payload: {
+    id?: string;
+    invoice: string;
+    status?: string;
+    paymentUrl?: string | null;
+    paymentDeeplink?: string | null;
+    paymentNo?: string | null;
+    paymentName?: string | null;
+    expired?: number | null;
+    productName?: string;
+    amount: number;
+    basePrice?: number;
+    adminFee?: number;
+    discountAmount?: number;
+}): RecordLike;
+export {};
 //# sourceMappingURL=sanitize.d.ts.map

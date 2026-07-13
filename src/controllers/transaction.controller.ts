@@ -9,21 +9,13 @@ import * as crypto from 'crypto'; // Added for VIP callback signature validation
 import axios from 'axios';
 import { emitTransactionUpdate } from '../lib/socket.js';
 import {
+    sanitizeCategoryForPublic,
     sanitizeProductsForPublic,
-    sanitizeTransactionForPublic,
     sanitizeTransactionsForPublic,
+    toPublicCheckoutResponse,
+    toPublicTransactionResponse,
 } from '../lib/sanitize.js';
 import { syncProviderStatusIfNeeded } from '../services/transaction-sync.service.js';
-
-const maskTransactionGuestContact = (trx: { userId?: string | null; guestContact?: string | null }) =>
-    trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '');
-
-const toPublicTransactionResponse = (trx: any, overrides: Record<string, any> = {}) =>
-    sanitizeTransactionForPublic({
-        ...trx,
-        guestContact: maskTransactionGuestContact(trx),
-        ...overrides,
-    });
 
 // --- CONFIG CACHE (reduces DB queries from every request to max once per 5 minutes) ---
 let _configCache: Record<string, string> | null = null;
@@ -411,7 +403,7 @@ export const getCategories = async (req: Request, res: Response) => {
             if (!seenBrands.has(brand)) {
                 seenBrands.add(brand);
                 uniqueBrands.push({
-                    ...cat,
+                    ...sanitizeCategoryForPublic(cat as any),
                     name: brand // Display Brand Name instead of specific Category Name
                 });
             }
@@ -449,7 +441,13 @@ export const getCategoryBySlug = async (req: Request, res: Response) => {
         // Let's ensure 'variations' contains at least itself if brand exists, or logic to handle single items.
         // If brand is null, variations is empty.
 
-        res.json({ success: true, data: { ...category, variations } });
+        res.json({
+            success: true,
+            data: {
+                ...sanitizeCategoryForPublic(category as any),
+                variations: variations.map((v) => sanitizeCategoryForPublic(v as any)),
+            },
+        });
     } catch (error: any) {
         res.status(500).json({ success: false, message: 'Internal server error' });
     }
@@ -1164,7 +1162,7 @@ export const createTransaction = async (req: Request, res: Response) => {
 
                 res.json({
                     success: true,
-                    data: {
+                    data: toPublicCheckoutResponse({
                         id: trxId,
                         invoice,
                         paymentUrl: payment.paymentUrl,
@@ -1175,9 +1173,9 @@ export const createTransaction = async (req: Request, res: Response) => {
                         productName: product.name,
                         amount: totalPayable,
                         basePrice: product.price_sell,
-                        adminFee: adminFee,
-                        discountAmount: discountAmount
-                    }
+                        adminFee,
+                        discountAmount,
+                    }),
                 });
             } else {
                 res.status(400).json({ success: false, message: payment.message });
@@ -1364,13 +1362,14 @@ export const createDeposit = async (req: Request, res: Response) => {
 
         res.json({
             success: true,
-            data: {
+            data: toPublicCheckoutResponse({
                 invoice,
                 paymentUrl: payment.paymentUrl,
                 paymentDeeplink: (payment as any).paymentDeeplink || null,
                 paymentNo: payment.paymentNo,
-                amount
-            }
+                paymentName: payment.paymentName,
+                amount: Number(amount),
+            }),
         });
 
     } catch (error: any) {
@@ -1630,6 +1629,9 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
         });
         if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
 
+        const authUser = (req as any).user;
+        const isOwner = Boolean(authUser && trx.userId && authUser.id === trx.userId);
+
         // A. If PENDING, Check Payment Gateway First
         if ((trx.status as any) === 'PENDING') {
             if (trx.paymentTrxId) {
@@ -1685,7 +1687,7 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                 // 3. EXPIRED/FAILED -> Fail
                 let gatewayStatus = 'PENDING';
 
-                const safeData = toPublicTransactionResponse(trx);
+                const safeData = toPublicTransactionResponse(trx as any, { isOwner });
                 if (payCheck.success) {
                     if (payCheck.status === 6 || String(payCheck.statusDesc).toUpperCase() === 'BERHASIL' || String(payCheck.message).toUpperCase() === 'PAID') {
                         gatewayStatus = 'PAID';
@@ -1707,9 +1709,12 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                     return res.json({
                         success: true,
                         message: "Payment detected at Gateway. Waiting for system confirmation...",
-                        data: toPublicTransactionResponse(trx, {
-                            status: trx.status,
-                            detectedStatus: detectedStatus,
+                        data: toPublicTransactionResponse(trx as any, {
+                            isOwner,
+                            overrides: {
+                                status: trx.status,
+                                detectedStatus,
+                            },
                         }),
                     });
                 } else if (gatewayStatus === 'EXPIRED' || gatewayStatus === 'FAILED') {
@@ -1747,7 +1752,11 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
         // DEPOSIT transactions don't go through game provider — return data directly
         const isDepositTrx = (trx as any).type === 'DEPOSIT' || trx.invoice?.startsWith('DEP-');
         if (isDepositTrx) {
-            return res.json({ success: true, message: `Deposit Status: ${trx.status}`, data: toPublicTransactionResponse(trx) });
+            return res.json({
+                success: true,
+                message: `Deposit Status: ${trx.status}`,
+                data: toPublicTransactionResponse(trx as any, { isOwner }),
+            });
         }
 
         if (trx.status === 'PROCESSING' || trx.status === 'SUCCESS') {
@@ -1826,13 +1835,19 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
                     return res.json({
                         success: true,
                         message: "Status Updated",
-                        data: toPublicTransactionResponse(trx, { status: newStatus }),
+                        data: toPublicTransactionResponse(trx as any, {
+                            isOwner,
+                            overrides: {
+                                status: newStatus,
+                                sn: (result.data as any).sn,
+                            },
+                        }),
                     });
                 } else {
                     return res.json({
                         success: true,
                         message: `Status Unchanged (${providerStatus || 'PENDING'})`,
-                        data: toPublicTransactionResponse(trx),
+                        data: toPublicTransactionResponse(trx as any, { isOwner }),
                     });
                 }
             } else {
@@ -1844,7 +1859,7 @@ export const checkTransactionStatus = async (req: Request, res: Response) => {
         return res.json({
             success: true,
             message: "No Updates Available (Not Processing)",
-            data: toPublicTransactionResponse(trx),
+            data: toPublicTransactionResponse(trx as any, { isOwner }),
         });
 
     } catch (error: any) {
@@ -1865,7 +1880,7 @@ export const getHistory = async (req: Request, res: Response) => {
             include: { product: true }
         });
 
-        res.json({ success: true, data: sanitizeTransactionsForPublic(transactions) });
+        res.json({ success: true, data: sanitizeTransactionsForPublic(transactions as any[], { isOwner: true }) });
     } catch (error: any) {
         console.error("History Error:", error);
         res.status(500).json({ success: false, message: "Failed to fetch history" });
@@ -1900,15 +1915,7 @@ export const getTransaction = async (req: Request, res: Response) => {
             return res.status(403).json({ success: false, message: 'Access Denied: Private Transaction' });
         }
 
-        // Sensitive Data Masking for non-owners (e.g. public status check)
-        // [SECURITY] Enhanced Masking for Guests to prevent IDOR informational leaks
-        const targetIdStr = transaction.targetId || '';
-        const safeData = sanitizeTransactionForPublic({
-            ...transaction,
-            targetId: isOwner ? transaction.targetId : (targetIdStr.length > 4 ? targetIdStr.slice(0, 3) + '****' : '****'),
-            guestContact: isOwner ? transaction.guestContact : '********' + (transaction.guestContact?.slice(-3) || ''),
-            paymentNo: transaction.paymentNo
-        });
+        const safeData = toPublicTransactionResponse(transaction as any, { isOwner });
 
         res.json({ success: true, data: safeData });
     } catch (error: any) {

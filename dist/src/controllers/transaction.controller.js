@@ -7,14 +7,8 @@ import * as dupayService from '../services/dupay.service.js';
 import * as crypto from 'crypto'; // Added for VIP callback signature validation
 import axios from 'axios';
 import { emitTransactionUpdate } from '../lib/socket.js';
-import { sanitizeProductsForPublic, sanitizeTransactionForPublic, sanitizeTransactionsForPublic, } from '../lib/sanitize.js';
+import { sanitizeCategoryForPublic, sanitizeProductsForPublic, sanitizeTransactionsForPublic, toPublicCheckoutResponse, toPublicTransactionResponse, } from '../lib/sanitize.js';
 import { syncProviderStatusIfNeeded } from '../services/transaction-sync.service.js';
-const maskTransactionGuestContact = (trx) => trx.userId ? (trx.guestContact || '********') : '********' + (trx.guestContact?.slice(-3) || '');
-const toPublicTransactionResponse = (trx, overrides = {}) => sanitizeTransactionForPublic({
-    ...trx,
-    guestContact: maskTransactionGuestContact(trx),
-    ...overrides,
-});
 // --- CONFIG CACHE (reduces DB queries from every request to max once per 5 minutes) ---
 let _configCache = null;
 let _configCacheExpiry = 0;
@@ -356,7 +350,7 @@ export const getCategories = async (req, res) => {
             if (!seenBrands.has(brand)) {
                 seenBrands.add(brand);
                 uniqueBrands.push({
-                    ...cat,
+                    ...sanitizeCategoryForPublic(cat),
                     name: brand // Display Brand Name instead of specific Category Name
                 });
             }
@@ -391,7 +385,13 @@ export const getCategoryBySlug = async (req, res) => {
         // If no brand or no other variations, 'variations' will just be empty or just self if we queried differently.
         // Let's ensure 'variations' contains at least itself if brand exists, or logic to handle single items.
         // If brand is null, variations is empty.
-        res.json({ success: true, data: { ...category, variations } });
+        res.json({
+            success: true,
+            data: {
+                ...sanitizeCategoryForPublic(category),
+                variations: variations.map((v) => sanitizeCategoryForPublic(v)),
+            },
+        });
     }
     catch (error) {
         res.status(500).json({ success: false, message: 'Internal server error' });
@@ -1046,7 +1046,7 @@ export const createTransaction = async (req, res) => {
                 }
                 res.json({
                     success: true,
-                    data: {
+                    data: toPublicCheckoutResponse({
                         id: trxId,
                         invoice,
                         paymentUrl: payment.paymentUrl,
@@ -1057,9 +1057,9 @@ export const createTransaction = async (req, res) => {
                         productName: product.name,
                         amount: totalPayable,
                         basePrice: product.price_sell,
-                        adminFee: adminFee,
-                        discountAmount: discountAmount
-                    }
+                        adminFee,
+                        discountAmount,
+                    }),
                 });
             }
             else {
@@ -1220,13 +1220,14 @@ export const createDeposit = async (req, res) => {
         }
         res.json({
             success: true,
-            data: {
+            data: toPublicCheckoutResponse({
                 invoice,
                 paymentUrl: payment.paymentUrl,
                 paymentDeeplink: payment.paymentDeeplink || null,
                 paymentNo: payment.paymentNo,
-                amount
-            }
+                paymentName: payment.paymentName,
+                amount: Number(amount),
+            }),
         });
     }
     catch (error) {
@@ -1455,6 +1456,8 @@ export const checkTransactionStatus = async (req, res) => {
         });
         if (!trx)
             return res.status(404).json({ success: false, message: "Transaction not found" });
+        const authUser = req.user;
+        const isOwner = Boolean(authUser && trx.userId && authUser.id === trx.userId);
         // A. If PENDING, Check Payment Gateway First
         if (trx.status === 'PENDING') {
             if (trx.paymentTrxId) {
@@ -1506,7 +1509,7 @@ export const checkTransactionStatus = async (req, res) => {
                 // 2. PAID -> Process
                 // 3. EXPIRED/FAILED -> Fail
                 let gatewayStatus = 'PENDING';
-                const safeData = toPublicTransactionResponse(trx);
+                const safeData = toPublicTransactionResponse(trx, { isOwner });
                 if (payCheck.success) {
                     if (payCheck.status === 6 || String(payCheck.statusDesc).toUpperCase() === 'BERHASIL' || String(payCheck.message).toUpperCase() === 'PAID') {
                         gatewayStatus = 'PAID';
@@ -1529,8 +1532,11 @@ export const checkTransactionStatus = async (req, res) => {
                         success: true,
                         message: "Payment detected at Gateway. Waiting for system confirmation...",
                         data: toPublicTransactionResponse(trx, {
-                            status: trx.status,
-                            detectedStatus: detectedStatus,
+                            isOwner,
+                            overrides: {
+                                status: trx.status,
+                                detectedStatus,
+                            },
                         }),
                     });
                 }
@@ -1565,7 +1571,11 @@ export const checkTransactionStatus = async (req, res) => {
         // DEPOSIT transactions don't go through game provider — return data directly
         const isDepositTrx = trx.type === 'DEPOSIT' || trx.invoice?.startsWith('DEP-');
         if (isDepositTrx) {
-            return res.json({ success: true, message: `Deposit Status: ${trx.status}`, data: toPublicTransactionResponse(trx) });
+            return res.json({
+                success: true,
+                message: `Deposit Status: ${trx.status}`,
+                data: toPublicTransactionResponse(trx, { isOwner }),
+            });
         }
         if (trx.status === 'PROCESSING' || trx.status === 'SUCCESS') {
             if (!trx.providerTrxId) {
@@ -1635,14 +1645,20 @@ export const checkTransactionStatus = async (req, res) => {
                     return res.json({
                         success: true,
                         message: "Status Updated",
-                        data: toPublicTransactionResponse(trx, { status: newStatus }),
+                        data: toPublicTransactionResponse(trx, {
+                            isOwner,
+                            overrides: {
+                                status: newStatus,
+                                sn: result.data.sn,
+                            },
+                        }),
                     });
                 }
                 else {
                     return res.json({
                         success: true,
                         message: `Status Unchanged (${providerStatus || 'PENDING'})`,
-                        data: toPublicTransactionResponse(trx),
+                        data: toPublicTransactionResponse(trx, { isOwner }),
                     });
                 }
             }
@@ -1654,7 +1670,7 @@ export const checkTransactionStatus = async (req, res) => {
         return res.json({
             success: true,
             message: "No Updates Available (Not Processing)",
-            data: toPublicTransactionResponse(trx),
+            data: toPublicTransactionResponse(trx, { isOwner }),
         });
     }
     catch (error) {
@@ -1673,7 +1689,7 @@ export const getHistory = async (req, res) => {
             orderBy: { createdAt: 'desc' },
             include: { product: true }
         });
-        res.json({ success: true, data: sanitizeTransactionsForPublic(transactions) });
+        res.json({ success: true, data: sanitizeTransactionsForPublic(transactions, { isOwner: true }) });
     }
     catch (error) {
         console.error("History Error:", error);
@@ -1704,15 +1720,7 @@ export const getTransaction = async (req, res) => {
         if (transaction.userId && !isOwner) {
             return res.status(403).json({ success: false, message: 'Access Denied: Private Transaction' });
         }
-        // Sensitive Data Masking for non-owners (e.g. public status check)
-        // [SECURITY] Enhanced Masking for Guests to prevent IDOR informational leaks
-        const targetIdStr = transaction.targetId || '';
-        const safeData = sanitizeTransactionForPublic({
-            ...transaction,
-            targetId: isOwner ? transaction.targetId : (targetIdStr.length > 4 ? targetIdStr.slice(0, 3) + '****' : '****'),
-            guestContact: isOwner ? transaction.guestContact : '********' + (transaction.guestContact?.slice(-3) || ''),
-            paymentNo: transaction.paymentNo
-        });
+        const safeData = toPublicTransactionResponse(transaction, { isOwner });
         res.json({ success: true, data: safeData });
     }
     catch (error) {
